@@ -190,8 +190,11 @@ received → verified → queued → forwarded → fetching → transcribing →
 
 ## Build order (agreed starting point)
 
-**Part 1 (next): Worker 1** — Telegram webhook receiver: secret-token check, Update parsing, classification, URL-shape validation, multi-URL fan-out, R2 upload for native media, job descriptor build, D1 insert, enqueue, fast ACK.
-- Practices to apply (from everything-claude-code review): plan first (done — this doc), TDD the pure logic (classification, URL validation, fan-out), secrets in Wrangler secrets never code, verify continuously.
+**Part 1: Worker 1 — BUILT (2026-07-15)** — lives in `workers/ingest/` (TypeScript + Wrangler + Vitest). Secret-token check, owner-chat allowlist, Update parsing, classification, URL-shape validation, multi-URL fan-out, R2 upload for native media (≤20MB getFile cap enforced), D1 insert with state-aware dedup, enqueue, fast ACK. Ingestion ack = 👀 reaction (setMessageReaction); rejections get a text reply. 45 tests green (pure logic + workerd integration via vitest-pool-workers), verified locally with wrangler dev + curl.
+- Not yet done: cloud provisioning + deploy (queue, R2 bucket, D1 create + real database_id in wrangler.jsonc, secrets, setWebhook, R2 lifecycle rule) — steps in `workers/ingest/README.md`.
+- Implementation notes: dedup rule = rows for (chat_id, message_id) in state ≥ queued → skip; stale `received` rows → delete + reprocess (safe because queue delivery is at-least-once; consumer must be idempotent anyway). Permanent rejections reply + 200; transient failures 500 → Telegram retries.
+
+**Part 2 (next): Worker 2** — queue consumer + status-update fetch endpoint (D1 proxy for Cloud Run).
 
 ## Reference commands
 
