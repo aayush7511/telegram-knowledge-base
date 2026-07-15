@@ -8,7 +8,7 @@
   // Non-secret config. Secrets (TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET)
   // go in `wrangler secret put` for prod and .dev.vars locally.
   "vars": {
-    "OWNER_CHAT_ID": "0"
+    "OWNER_CHAT_ID": "7701521936"
   },
 
   "queues": {
@@ -19,8 +19,7 @@
     {
       "binding": "DB",
       "database_name": "kb-jobs",
-      // placeholder — replace with the real id from `wrangler d1 create kb-jobs` before deploy
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "0a2d2a39-fd46-47f3-8918-a3c5f6e2191a",
       "migrations_dir": "migrations"
     }
   ]
