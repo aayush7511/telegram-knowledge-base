@@ -111,6 +111,9 @@ CREATE TABLE jobs (
   state       TEXT,
   error       TEXT,               -- populated on failure
   r2_key      TEXT,               -- nullable: filled at ingestion (native media) or after Pi fetch (URLs)
+  text        TEXT,               -- added 0002: inline content for text jobs (≤4,096 chars)
+  url         TEXT,               -- added 0002: the URL for url jobs
+  caption     TEXT,               -- added 0002: media caption / surrounding prose for URL fan-outs
   created_at  TEXT,
   updated_at  TEXT
 );
@@ -124,6 +127,7 @@ CREATE TABLE job_events (          -- optional audit trail, append-only, add whe
 );
 ```
 
+- **Content rule (added 2026-07-17): every job row carries its content or a pointer to it** — text/url/caption inline (message-scale, Telegram-capped), binary media via r2_key. Rationale: the queue message was previously the only copy of text/url content (~4-day retention, no consumer yet); D1 copy makes jobs re-enqueueable and failed rows self-describing.
 - Start with `jobs` only (Option A: state + error + created_at + updated_at). Add `job_events` later if per-stage timing is wanted. Rejected: column-per-state (`fetched_at`, `saved_at`...) — mostly-null columns, schema migration per new state, can't represent retries.
 - Use `db.batch([...])` to atomically update `jobs` + insert `job_events` when both tables are live.
 - Dedup webhook retries via (chat_id, message_id) guard on insert.
