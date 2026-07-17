@@ -14,6 +14,32 @@ describe("extractUrls", () => {
   it("strips trailing punctuation", () => {
     expect(extractUrls("read this (https://example.com/a), ok?")).toEqual(["https://example.com/a"]);
   });
+
+  it("splits two URLs glued together with no whitespace", () => {
+    expect(extractUrls("https://youtu.be/abc123https://www.instagram.com/p/Cxyz1234abc/")).toEqual([
+      "https://youtu.be/abc123",
+      "https://www.instagram.com/p/Cxyz1234abc/",
+    ]);
+  });
+
+  it("splits comma-separated URLs", () => {
+    expect(extractUrls("https://a.example/one,https://b.example/two")).toEqual([
+      "https://a.example/one",
+      "https://b.example/two",
+    ]);
+  });
+
+  it("does not split on bare 'http' text inside a query param", () => {
+    expect(extractUrls("https://example.com/search?q=httproutersetup")).toEqual([
+      "https://example.com/search?q=httproutersetup",
+    ]);
+  });
+
+  it("keeps a full URL embedded as a query param value whole", () => {
+    expect(extractUrls("https://example.com/redirect?url=https://target.com/page")).toEqual([
+      "https://example.com/redirect?url=https://target.com/page",
+    ]);
+  });
 });
 
 describe("checkUrl — instagram", () => {

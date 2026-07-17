@@ -16,10 +16,17 @@ export type CheckedUrl = AcceptedUrl | RejectedUrl;
 
 const URL_RE = /https?:\/\/[^\s<>"']+/gi;
 const TRAILING_PUNCT = /[).,!?:;\]}]+$/;
+// A scheme appearing mid-token means two URLs got pasted together with no
+// whitespace — split there. The lookbehind keeps legitimately-embedded URLs
+// whole (?url=https://…, archive.org/web/…/https://…).
+const SCHEME_BOUNDARY = /(?<![=&?/])(?=https?:\/\/)/gi;
 
 export function extractUrls(text: string): string[] {
   const matches = text.match(URL_RE) ?? [];
-  return matches.map((m) => m.replace(TRAILING_PUNCT, "")).filter(Boolean);
+  return matches
+    .flatMap((m) => m.split(SCHEME_BOUNDARY))
+    .map((m) => m.replace(TRAILING_PUNCT, ""))
+    .filter(Boolean);
 }
 
 const IG_HOSTS = new Set(["instagram.com", "www.instagram.com", "instagr.am"]);
