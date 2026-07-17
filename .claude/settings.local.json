@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell($env:Path += \";C:\\\\Program Files\\\\nodejs\"; Set-Location C:\\\\Users\\\\anush\\\\knowledge_base\\\\workers\\\\ingest; npx wrangler login)"
+    ]
+  }
+}

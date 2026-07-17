@@ -27,10 +27,21 @@ export async function insertJobs(db: D1Database, jobs: JobDescriptor[]): Promise
     jobs.map((j) =>
       db
         .prepare(
-          "INSERT INTO jobs (job_id, chat_id, message_id, group_id, content_type, state, r2_key, created_at, updated_at) " +
-            "VALUES (?1, ?2, ?3, ?4, ?5, 'received', ?6, ?7, ?7)",
+          "INSERT INTO jobs (job_id, chat_id, message_id, group_id, content_type, state, r2_key, text, url, caption, created_at, updated_at) " +
+            "VALUES (?1, ?2, ?3, ?4, ?5, 'received', ?6, ?7, ?8, ?9, ?10, ?10)",
         )
-        .bind(j.job_id, j.chat_id, j.message_id, j.group_id, j.content_type, j.media?.r2_key ?? null, j.time_received),
+        .bind(
+          j.job_id,
+          j.chat_id,
+          j.message_id,
+          j.group_id,
+          j.content_type,
+          j.media?.r2_key ?? null,
+          j.text ?? null,
+          j.url ?? null,
+          j.caption ?? null,
+          j.time_received,
+        ),
     ),
   );
 }

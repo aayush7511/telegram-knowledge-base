@@ -26,6 +26,9 @@ interface JobRow {
   content_type: string;
   state: string;
   r2_key: string | null;
+  text: string | null;
+  url: string | null;
+  caption: string | null;
 }
 
 async function allRows(): Promise<JobRow[]> {
@@ -71,6 +74,9 @@ describe("text ingestion", () => {
       content_type: "text",
       state: "queued",
       r2_key: null,
+      text: "remember: falkordb is redis-based",
+      url: null,
+      caption: null,
     });
   });
 
@@ -82,9 +88,8 @@ describe("text ingestion", () => {
   });
 
   it("fans out a multi-URL message into url jobs sharing a group_id", async () => {
-    const res = await post(
-      update(textMessage("https://youtu.be/abc123 https://www.youtube.com/watch?v=def456")),
-    );
+    const text = "two vids: https://youtu.be/abc123 https://www.youtube.com/watch?v=def456";
+    const res = await post(update(textMessage(text)));
     expect(res.status).toBe(200);
 
     const rows = await allRows();
@@ -92,6 +97,11 @@ describe("text ingestion", () => {
     expect(rows.every((r) => r.content_type === "url" && r.state === "queued")).toBe(true);
     expect(rows[0].group_id).not.toBeNull();
     expect(rows[0].group_id).toBe(rows[1].group_id);
+    // each row stores its own url; caption carries the surrounding prose
+    expect(new Set(rows.map((r) => r.url))).toEqual(
+      new Set(["https://youtu.be/abc123", "https://www.youtube.com/watch?v=def456"]),
+    );
+    expect(rows.every((r) => r.caption === text && r.text === null)).toBe(true);
   });
 
   it("rejects invalid URLs without creating jobs", async () => {
@@ -108,7 +118,7 @@ describe("media ingestion", () => {
 
     const rows = await allRows();
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ content_type: "voice", state: "queued" });
+    expect(rows[0]).toMatchObject({ content_type: "voice", state: "queued", text: null, url: null, caption: null });
     expect(rows[0].r2_key).toMatch(/^raw-media\/.+\.ogg$/);
 
     const obj = await env.RAW_MEDIA.get(rows[0].r2_key!);
