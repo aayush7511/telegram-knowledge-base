@@ -1,7 +1,7 @@
 # Knowledge Base Project — Conversation Summary
 
 > Living document tracking all decisions and state for the personal AI memory/knowledge capture tool.
-> Last updated: 2026-07-14
+> Last updated: 2026-07-21
 
 ## The Idea
 
@@ -149,6 +149,7 @@ received → verified → queued → forwarded → fetching → transcribing →
 ## Access patterns / integration notes
 
 - **Cloud Run → D1**: no native driver. Use a thin proxy Worker (Worker 2's fetch handler) with the D1 binding; Cloud Run POSTs status updates with a shared-secret header. (D1's raw REST API exists but shares the global Cloudflare API rate limit — admin use only.)
+- **Status-update contract (settled 2026-07-21, implemented on the Cloud Run side)**: `POST {WORKER2_STATUS_URL}` with header `X-KB-Secret: {WORKER2_SHARED_SECRET}` and body `{job_id, state, r2_key|null, error|null}`. `state` ∈ fetching | transcribing | summarizing | saved | failed (`forwarded` is written by Worker 2 itself after a successful push). Worker 2 will `UPDATE jobs SET state=?, r2_key=COALESCE(?, r2_key), error=?, updated_at=?` and later batch a `job_events` insert. Two secrets: `KB_SHARED_SECRET` (Worker 2 → Cloud Run; Wrangler secret `CLOUD_RUN_SECRET` later) and `WORKER2_SHARED_SECRET` (Cloud Run → Worker 2). Status posts are best-effort — failures logged, never fail job handling; D1 state drives retries.
 - **Cloud Run → R2**: direct via S3-compatible API + access keys. No proxy needed.
 - **Worker 1 → Queue**: native binding, `env.MY_QUEUE.send(job)`.
 - **Queue → Worker 2**: native push consumer (`queue()` handler). One Worker can export both `queue()` and `fetch()` handlers — isolated execution contexts, no contention. Both halves of the same round trip (job out / status back), so combining is sensible.
@@ -198,7 +199,9 @@ received → verified → queued → forwarded → fetching → transcribing →
 - Not yet done: cloud provisioning + deploy (queue, R2 bucket, D1 create + real database_id in wrangler.jsonc, secrets, setWebhook, R2 lifecycle rule) — steps in `workers/ingest/README.md`.
 - Implementation notes: dedup rule = rows for (chat_id, message_id) in state ≥ queued → skip; stale `received` rows → delete + reprocess (safe because queue delivery is at-least-once; consumer must be idempotent anyway). Permanent rejections reply + 200; transient failures 500 → Telegram retries.
 
-**Part 2 (next): Worker 2** — queue consumer + status-update fetch endpoint (D1 proxy for Cloud Run).
+**Part 1.5: Cloud Run stub — PROVISIONED (2026-07-21)** — lives in `services/orchestrator/` (Python + FastAPI, deployed via `gcloud run deploy --source` buildpacks). Deployed **before** Worker 2 so the queue consumer has a real endpoint from day one (otherwise every consumed job would fail/retry into the void) and so `CLOUD_RUN_URL` is pinned (service URL is stable across deploys). Service: `kb-orchestrator`, project `kb-orchestrator-8yuto1`, region us-central1 (free tier = Tier-1 regions; latency irrelevant for async), URL `https://kb-orchestrator-135554694779.us-central1.run.app`. `--allow-unauthenticated` (auth = app-level shared secret; Workers can't mint Google OIDC tokens) + `--max-instances 1` (free-tier burn cap) + request-based billing (default — never add a poll loop). Endpoints: `POST /jobs` (X-KB-Secret auth, logs descriptor, fires placeholder status update), `GET /health` (NOT `/healthz` — Google's frontend reserves that path on run.app and 404s it). Verified live: 401 without secret, 200 with, logs show descriptor + skipped status callback. No processing yet — pure contract stub.
+
+**Part 2 (next): Worker 2** — queue consumer + status-update fetch endpoint (D1 proxy for Cloud Run). Inputs ready: service URL above, both secrets (in `services/orchestrator/.dev.vars`, gitignored), status-update contract (§Access patterns).
 
 ## Reference commands
 

@@ -25,9 +25,9 @@ Telegram → CF Worker 1 (validate/classify/store) → CF Queue → CF Worker 2 
 - **Cloudflare D1** — SQLite job tracking + inline message content
 - **Telegram Bot API** — the single ingestion channel (webhook + secret token)
 - **Vitest + @cloudflare/vitest-pool-workers** — tests run inside real workerd
+- **Google Cloud Run** — processing orchestrator, deployed as an auth-checking stub (Python + FastAPI, request-based billing, scales to zero); real processing not built yet
 
 **Planned**
-- **Google Cloud Run** — processing orchestrator (request-based billing, scales to zero)
 - **Groq API** — Whisper large-v3-turbo ASR + Llama 3.3 70B summarization (free tiers)
 - **Raspberry Pi** — residential-IP fetcher running yt-dlp + PO-token provider
 - **Graphiti + FalkorDB** — self-hosted temporal knowledge graph (Docker on the Pi)
@@ -71,12 +71,18 @@ Everything currently built. All of this is **implemented, tested (49 tests), dep
 - Ack UX: 👀 reaction on accepted messages; permanent rejections reply + HTTP 200 (no Telegram retry); transient failures return 500 so Telegram redelivers safely
 - Provisioned infra: `kb-jobs` queue, `kb-raw-media` R2 bucket (2-day expiry lifecycle rule on `raw-media/`), `kb-jobs` D1 database (2 migrations applied), secrets in Wrangler, webhook registered with `allowed_updates=["message"]`
 
+**Cloud Run stub — `kb-orchestrator` (processing orchestrator, contract only), deployed on us-central1**
+- `POST /jobs` intake with `X-KB-Secret` shared-secret auth (401 otherwise); logs the descriptor, no processing yet
+- Status-update callback to Worker 2 implemented per contract (`{job_id, state, r2_key, error}` + secret header); no-op until Worker 2 exists
+- Deployed via source buildpacks, request-based billing, scales to zero, `--max-instances 1` free-tier cap
+- See [services/orchestrator/README.md](services/orchestrator/README.md)
+
 ## Features Not Started
 
 Everything designed (see [convo_summary.md](convo_summary.md)) but with zero code written:
 
 - **Worker 2** — queue consumer that pushes job descriptors to Cloud Run via HTTP POST (keeps Cloud Run on request-based billing), plus a `fetch()` handler that receives status updates back from Cloud Run and writes them to D1 (shared-secret auth; doubles as the Cloud Run→D1 proxy since D1 has no external driver)
-- **Cloud Run orchestrator** — handles `text`/`blog` jobs directly (HTTP fetch + readability extraction + LLM summarization); pulls native media from R2 via S3-compatible API and sends it to Groq for ASR; delegates Instagram/YouTube URLs to the Pi
+- **Cloud Run orchestrator (processing)** — the deployed stub does no work yet; still to build: handle `text`/`blog` jobs directly (HTTP fetch + readability extraction + LLM summarization), pull native media from R2 via S3-compatible API and send it to Groq for ASR, delegate Instagram/YouTube URLs to the Pi
 - **Raspberry Pi fetcher** — polls for fetch jobs over outbound HTTPS (no port-forwarding), runs yt-dlp with dedicated-account cookies + `bgutil-ytdlp-pot-provider` for YouTube PO tokens, normalizes audio with ffmpeg, uploads to R2; Layer-2 URL validation (e.g. IG `/p/` posts that turn out to be image-only) with fail/reroute
 - **Groq integration** — Whisper large-v3-turbo transcription (fallback: local faster-whisper distil-large-v3 int8); Llama 3.3 70B summarization/curation; YouTube auto-caption shortcut to skip ASR when quality suffices
 - **Knowledge graph** — self-hosted Graphiti + FalkorDB via Docker on the Pi; ingestion of transcripts/summaries with temporal metadata; retrieval that surfaces related past content in conversation
