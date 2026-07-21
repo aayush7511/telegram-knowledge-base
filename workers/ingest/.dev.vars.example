@@ -1,0 +1,4 @@
+# Copy to .dev.vars (gitignored) and fill in. Prod values go in `wrangler secret put`.
+TELEGRAM_BOT_TOKEN=123456789:your-bot-token-from-botfather
+TELEGRAM_WEBHOOK_SECRET=any-random-string-you-invent
+OWNER_CHAT_ID=your-numeric-telegram-id
