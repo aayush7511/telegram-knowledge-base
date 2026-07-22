@@ -1,7 +1,7 @@
 # Knowledge Base Project — Conversation Summary
 
 > Living document tracking all decisions and state for the personal AI memory/knowledge capture tool.
-> Last updated: 2026-07-21
+> Last updated: 2026-07-22
 
 ## The Idea
 
@@ -201,7 +201,9 @@ received → verified → queued → forwarded → fetching → transcribing →
 
 **Part 1.5: Cloud Run stub — PROVISIONED (2026-07-21)** — lives in `services/orchestrator/` (Python + FastAPI, deployed via `gcloud run deploy --source` buildpacks). Deployed **before** Worker 2 so the queue consumer has a real endpoint from day one (otherwise every consumed job would fail/retry into the void) and so `CLOUD_RUN_URL` is pinned (service URL is stable across deploys). Service: `kb-orchestrator`, project `kb-orchestrator-8yuto1`, region us-central1 (free tier = Tier-1 regions; latency irrelevant for async), URL `https://kb-orchestrator-135554694779.us-central1.run.app`. `--allow-unauthenticated` (auth = app-level shared secret; Workers can't mint Google OIDC tokens) + `--max-instances 1` (free-tier burn cap) + request-based billing (default — never add a poll loop). Endpoints: `POST /jobs` (X-KB-Secret auth, logs descriptor, fires placeholder status update), `GET /health` (NOT `/healthz` — Google's frontend reserves that path on run.app and 404s it). Verified live: 401 without secret, 200 with, logs show descriptor + skipped status callback. No processing yet — pure contract stub.
 
-**Part 2 (next): Worker 2** — queue consumer + status-update fetch endpoint (D1 proxy for Cloud Run). Inputs ready: service URL above, both secrets (in `services/orchestrator/.dev.vars`, gitignored), status-update contract (§Access patterns).
+**Part 2: Worker 2 — BUILT (2026-07-22)** — lives in `workers/forward/` (`kb-forward`, deployed at `https://kb-forward.aayush7511.workers.dev`, registered consumer of `kb-jobs`). `queue()` handler POSTs each descriptor to Cloud Run `/jobs` with `X-KB-Secret`, marks the D1 row `forwarded` on 2xx; per-message ack/retry so one bad job doesn't recycle its batch-mates. `fetch()` `POST /status` implements the D1 side of the status-update contract (401 bad secret / 400 bad state / 404 unknown job_id / COALESCE on r2_key / error overwritten as sent). Consumer settings: max_batch_size 5, max_retries 5, retry_delay 60s, **no DLQ** — dropped messages stay recoverable from D1 (content rule). Types duplicated from Worker 1 (deliberate — revisit shared package at a third consumer); tests reuse Worker 1's migrations dir as schema truth. 20 tests green. Gotcha logged: piping `wrangler secret put` from PowerShell appended `\r` to the stored secret → auth mismatch; use `printf '%s' | wrangler secret put` from bash.
+
+**Part 3 (next)**: orchestrator processing (text/blog handling in Cloud Run) or Pi fetcher — see Features Not Started in README.
 
 ## Reference commands
 

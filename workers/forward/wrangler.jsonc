@@ -1,0 +1,34 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "kb-forward",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-01",
+  "observability": { "enabled": true },
+
+  // Non-secret config. Secrets (CLOUD_RUN_SECRET, WORKER2_SHARED_SECRET) go in
+  // `wrangler secret put` for prod and .dev.vars locally.
+  "vars": {
+    "CLOUD_RUN_URL": "https://kb-orchestrator-135554694779.us-central1.run.app"
+  },
+
+  "queues": {
+    "consumers": [
+      {
+        "queue": "kb-jobs",
+        "max_batch_size": 5,
+        "max_retries": 5,
+        // seconds between redeliveries — no hot retry loops burning Cloud Run requests.
+        // No DLQ: after max_retries the message drops, but the D1 row keeps full
+        // content (content rule 2026-07-17) and stays re-enqueueable.
+        "retry_delay": 60
+      }
+    ]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "kb-jobs",
+      "database_id": "0a2d2a39-fd46-47f3-8918-a3c5f6e2191a"
+    }
+  ]
+}
