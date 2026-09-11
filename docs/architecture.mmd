@@ -1,0 +1,22 @@
+flowchart TD
+    TG[Telegram message] -->|webhook POST + secret_token| W1["Cloudflare Worker 1<br/>validate, classify, split,<br/>upload media to R2, enqueue, fast ACK"]
+    W1 --> Q["Cloudflare Queue<br/>(128KB/message limit)"]
+    Q --> W2["Cloudflare Worker 2<br/>queue consumer: forwards jobs to Cloud Run<br/>+ fetch() handler: writes status to D1"]
+    W2 -->|push, HTTP POST| CR["Google Cloud Run<br/>processing orchestrator<br/>(request-based billing, scales to zero)"]
+
+    CR -->|blog URL jobs| BLOG["Playwright render →<br/>Trafilatura + extruct (metadata) →<br/>Gemini summarize"]
+    CR -->|native media| MEDIA["pull bytes from R2 →<br/>send to Groq for ASR"]
+    CR -->|Instagram/YouTube URLs| PI
+
+    BLOG --> REPLY[Telegram reply]
+
+    PI["Home Raspberry Pi (planned)<br/>polls for fetch jobs, outbound HTTPS<br/>yt-dlp + cookies + PO-token provider"] -->|uploads audio| R2[(R2)]
+    R2 --> GROQ["Groq API (planned)<br/>Whisper large-v3-turbo ASR<br/>Llama 3.3 70B summarize/curate"]
+    MEDIA --> GROQ
+    GROQ --> KG["Knowledge graph (planned)<br/>self-hosted Graphiti + FalkorDB<br/>on the Pi via Docker"]
+    KG --> REPLY
+
+    REPLY --> RESULT["Ingestion confirmation w/ summary,<br/>or failure message"]
+
+    W2 -.->|status updates| D1[(D1)]
+    CR -.->|status updates| W2
