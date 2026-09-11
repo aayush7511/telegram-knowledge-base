@@ -27,27 +27,32 @@ Each version is scoped as **Goals** (outcomes this version must achieve), **Non-
 Design decisions: [docs/design/v2.md](docs/design/v2.md)
 
 **Goals**
-- Every summarized item (from v1) is written into a temporal knowledge graph, not just replied and forgotten
-- A later, unrelated conversation about a related topic surfaces the relevant past item automatically
+- Every blog summary and plain-text note sent to the bot is written into a temporal knowledge graph, timestamped with when it was received
 - A deliberate curation policy exists and is applied consistently before any graph writes happen
+- Each job's D1 row shows whether it reached the graph (`indexing` → `saved` / `failed`) and holds enough content to rebuild its graph entry
+- The bot's 👀 reaction on a message changes to 👌 once everything from that message is in the graph
 
 **Non-Goals**
-- No dedicated chat/query UI for browsing the graph directly — retrieval only surfaces inline during normal conversation
+- No retrieval of any kind yet — no in-chat questions, no query connector (v3)
+- No weekly global Leiden community recompute (v3)
+- Native media is not written to the graph — it isn't transcribed until v3
 - No cross-user graph sharing — the graph remains scoped to the single owner
 - No automatic re-curation of already-ingested items if the policy changes later
 
 **User Journey**
-1. User sends a message (any type already handled by v1)
-2. Bot ingests, summarizes, and writes the result into the knowledge graph with temporal metadata
-3. Weeks later, the user mentions a related topic in conversation
-4. The assistant surfaces the earlier ingested content as relevant context
+1. User pastes a blog URL into the Telegram chat
+2. Bot reacts 👀, fetches and summarizes the page, and replies with the summary (as in v1)
+3. Bot writes the summary into the knowledge graph as an episode timestamped with when the message was received
+4. The job ends as `saved` in D1, the bot's 👀 on the message changes to 👌, and its entities and relationships are in FalkorDB ready for v3 retrieval
 
-## v3 — Native media + voice/video pipeline
+## v3 — Native media + retrieval
 
 **Goals**
 - A voice memo or video sent to the bot gets transcribed and summarized automatically
 - Instagram/YouTube links get fetched (via the home Pi) and processed the same way as native media
 - Pipeline states `fetching` / `transcribing` / `summarizing` reflect real work, not just the blog path
+- The graph is retrievable: questions asked in the chat get answers grounded in past content, and a separate connector lets Claude / Claude Code query the graph directly
+- A weekly global Leiden recompute corrects Graphiti's incremental community drift (design carried over in [docs/design/v2.md](docs/design/v2.md#moved-to-v3))
 
 **Non-Goals**
 - No live/streaming transcription — only complete, already-sent files
@@ -84,4 +89,4 @@ Design decisions: [docs/design/v2.md](docs/design/v2.md)
 
 ## Open questions to resolve before committing a version
 
-1. Knowledge graph specifics (v2): how Graphiti stores/queries time, what breaks with large files — see [docs/design/v2.md](docs/design/v2.md) for decisions already made.
+None open for v2 — M0 settled the Graphiti model (`gpt-4.1-mini` at temperature 0), embeddings, and episode format; see [docs/design/v2.md](docs/design/v2.md#m0-results-2026-09-11).

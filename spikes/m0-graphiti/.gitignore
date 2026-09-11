@@ -1,0 +1,5 @@
+.venv/
+urls.txt
+notes.txt
+episodes*.json
+results/
