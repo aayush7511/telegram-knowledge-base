@@ -4,7 +4,8 @@ The project runs on Gemini's free tier, currently estimated at ~5 requests/
 minute, so every call passes through an in-memory sliding-window limiter. This
 is sufficient because Cloud Run runs the orchestrator at `--max-instances 1` —
 there is never a second process to coordinate with. HTTP 429s (should the
-estimate be wrong, or on a burst) get exponential-backoff retries.
+estimate be wrong, or on a burst) and transient 5xx load-shedding get
+exponential-backoff retries.
 """
 from __future__ import annotations
 
@@ -25,6 +26,11 @@ MODEL = "gemini-3.6-flash"
 MAX_RPM = 5
 _WINDOW_S = 60.0
 _MAX_INPUT_CHARS = 20_000  # keep prompts bounded; blogs rarely exceed this
+
+# 429 = rate limit; 5xx = Gemini shedding load ("currently experiencing high
+# demand", observed live 2026-09-11). Both clear on their own, so back off and
+# retry rather than failing the job terminally.
+_RETRY_CODES = frozenset({429, 500, 502, 503, 504})
 
 _PROMPT = (
     "Summarize the following article for a personal knowledge base. Write 3-5 "
@@ -78,8 +84,11 @@ class Summarizer:
                 resp = self._client.models.generate_content(model=MODEL, contents=prompt)
                 return (resp.text or "").strip()
             except genai_errors.APIError as exc:
-                if getattr(exc, "code", None) == 429 and attempt < max_retries:
-                    log.warning("gemini 429; backing off %.1fs (attempt %d)", delay, attempt + 1)
+                code = getattr(exc, "code", None)
+                if code in _RETRY_CODES and attempt < max_retries:
+                    log.warning(
+                        "gemini %s; backing off %.1fs (attempt %d)", code, delay, attempt + 1
+                    )
                     time.sleep(delay)
                     delay *= 2
                     continue
