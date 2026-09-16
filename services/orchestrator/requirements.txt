@@ -6,3 +6,8 @@ lxml_html_clean
 extruct
 playwright
 google-genai
+# v2: knowledge-graph write (Graphiti → FalkorDB) and article archive (R2 via S3 API).
+# graphiti-core is pinned: its prompts and the extraction quality measured in M0
+# are tied to this version.
+graphiti-core[falkordb]==0.30.2
+boto3

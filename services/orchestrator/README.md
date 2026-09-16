@@ -1,27 +1,38 @@
 # kb-orchestrator (Cloud Run)
 
 Processing orchestrator for the knowledge-base pipeline. **Blog URL jobs are
-fully processed here** (Jira Epic SCRUM-6): Playwright renders the page,
-Trafilatura extracts the body text and extruct extracts title/author/sitename
-(JSON-LD → microdata → rdfa → opengraph cascade), Gemini 2.5 Flash summarizes,
-and the summary is sent back on Telegram. Other job types (native-media ASR,
-Instagram/YouTube Pi delegation) are still stubs. See
-[convo_summary.md](../../convo_summary.md).
+fully processed here**: Playwright renders the page, Trafilatura extracts the
+body text and extruct extracts title/author/sitename (JSON-LD → microdata →
+rdfa → opengraph cascade), the article text is archived in R2, Gemini
+summarizes, the summary is sent back on Telegram, and then written into the
+knowledge graph (Graphiti → FalkorDB). **Text notes** go straight into the
+graph. Other job types (native-media ASR, Instagram/YouTube Pi delegation) are
+still stubs. See [CLAUDE.md](../../CLAUDE.md) for the architecture and
+[docs/design/v2.md](../../docs/design/v2.md) for the graph decisions.
 
 ## Module map
 
-- `main.py` — FastAPI app; `POST /jobs` branches blog URLs into `process_blog_job`,
-  which runs **synchronously inside the request** (see below).
+- `main.py` — FastAPI app; `POST /jobs` branches blog URLs into `process_blog_job`
+  and text notes into `process_text_job`, both running **synchronously inside
+  the request** (see below).
 - `fetcher.py` — `render(url)`: headless Chromium → HTML.
 - `extract.py` — `extract_content(html, url)` → `ResponseObject` (text + metadata cascade).
-- `summarize.py` — `Summarizer`: Gemini 2.5 Flash with a 5-RPM sliding-window limiter.
+- `articles.py` — `store_article(job_id, text)`: cleaned article text → R2
+  `articles/{job_id}.txt` (S3 API via boto3). Best-effort; no-op until `R2_*` is set.
+- `summarize.py` — `Summarizer`: Gemini with a 5-RPM sliding-window limiter.
 - `telegram.py` — `send_summary(...)`: Bot API reply, threaded to the source message.
-- `test/` — pytest suite (offline; Playwright/Gemini/Telegram mocked).
+- `graph.py` — `write_episode(...)`: one Graphiti episode per job into FalkorDB
+  (graph `second-brain`), `gpt-4.1-mini` at temperature 0 for extraction,
+  `text-embedding-3-small` for embeddings. Built lazily on first use — the
+  FalkorDB driver connects in its constructor. `blog_episode(ro)` assembles the
+  episode: title + summary in the body, URL/site/author in `source_description`.
+- `test/` — pytest suite (offline; Playwright/Gemini/Telegram/Graphiti/R2 mocked).
 
 ## Why blog jobs are processed synchronously
 
 `/jobs` runs the whole pipeline before responding, so Worker 2's push stays open
-for ~20-30s. Cloud Run only guarantees CPU **during request processing**, so
+for ~20-30s of render + summarize plus the graph write (Graphiti makes ~7 LLM
+calls per episode; ~15s in M0, longer under rate limits — hence `--timeout 600`). Cloud Run only guarantees CPU **during request processing**, so
 anything deferred past the response (a FastAPI `BackgroundTask`, say) can be
 throttled mid-render and stall without ever writing a terminal state. Holding
 the request keeps that guarantee without needing `--no-cpu-throttling`.
@@ -36,9 +47,19 @@ Two consequences worth knowing:
   identical render+summarize that will fail the same way and consume the Gemini
   rate budget. Genuinely transient failures are re-driven from D1, not the queue.
 
-Watch the interaction with Worker 2's consumer settings (`max_batch_size 5`): a
-full batch of blog jobs is processed serially, so ~30s each ≈ 150s of wall clock
-in one `queue()` invocation. Fine today; revisit if batches grow or renders slow.
+Worker 2 delivers one job at a time (`max_batch_size 1`, `max_concurrency 1`),
+so there is never a second pipeline running in this instance — which also keeps
+Graphiti's entity dedup serial.
+
+### Blog pipeline order
+
+`fetching` (render → extract → archive text in R2) → `summarizing` (Gemini) →
+Telegram reply → `indexing` (status post carries the episode text, then the
+Graphiti write) → `saved`. The reply goes out *before* the graph write, so a
+graph failure still leaves the user with the summary; the row ends `failed`
+with the error and the episode text sits in D1's `summary` column for a
+re-drive. Text notes: `indexing` → `saved`, no reply — Worker 2's 👌 reaction is
+the acknowledgement.
 
 ## Endpoints
 
@@ -56,12 +77,15 @@ handler:
 ```
 POST {WORKER2_STATUS_URL}
 Headers: X-KB-Secret: {WORKER2_SHARED_SECRET}
-Body: { "job_id": string, "state": string, "r2_key": string|null, "error": string|null }
+Body: { "job_id": string, "state": string, "r2_key": string|null, "error": string|null, "summary": string|null }
 ```
 
-`state` is one of `fetching | transcribing | summarizing | saved | failed`
-(`forwarded` is written by Worker 2 itself). Until `WORKER2_STATUS_URL` is set,
-the callback is a logged no-op.
+`state` is one of `fetching | transcribing | summarizing | indexing | saved |
+failed` (`forwarded` is written by Worker 2 itself). `summary` is sent with
+`indexing` for blog jobs. Worker 2 validates transitions and answers `409` for
+a backwards move or anything after `saved`; like every other status failure
+that's logged, not fatal. Until `WORKER2_STATUS_URL` is set, the callback is a
+logged no-op.
 
 ## Develop
 
@@ -79,8 +103,12 @@ curl -s -X POST localhost:8080/jobs -H "X-KB-Secret: devsecret" \
   -d '{"job_id":"b1","content_type":"url","url_source":"blog","url":"https://example.com/post","chat_id":123,"message_id":9}'
 ```
 
-Run tests: `pytest` (from this directory). The suite is offline — Playwright,
-Gemini, and Telegram are mocked.
+Run tests: `pytest` (from this directory) — 19 tests. The suite is offline:
+Playwright, Gemini, Telegram, Graphiti, and R2 are mocked. Graph-related env
+vars for a real local run: `FALKORDB_HOST` (+ `FALKORDB_PORT`,
+`FALKORDB_PASSWORD`), `OPENAI_API_KEY`; article archive: `R2_ACCOUNT_ID`,
+`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` (+ `R2_BUCKET`, default
+`kb-raw-media`).
 
 ## Deploy (one-time provisioning)
 
@@ -96,9 +124,16 @@ gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregi
 #   WORKER2_SHARED_SECRET  — Cloud Run → Worker 2   (checked by Worker 2 when built)
 
 gcloud run deploy kb-orchestrator --source . --region us-central1 \
-  --allow-unauthenticated --max-instances 1 --memory 1Gi \
-  --set-env-vars KB_SHARED_SECRET=<...>,WORKER2_SHARED_SECRET=<...>,GEMINI_API_KEY=<...>,TELEGRAM_BOT_TOKEN=<...>
+  --allow-unauthenticated --max-instances 1 --memory 1Gi --timeout 600 \
+  --network default --subnet default --vpc-egress private-ranges-only \
+  --set-env-vars KB_SHARED_SECRET=<...>,WORKER2_SHARED_SECRET=<...>,GEMINI_API_KEY=<...>,TELEGRAM_BOT_TOKEN=<...>,OPENAI_API_KEY=<...>,FALKORDB_HOST=<vm internal ip>,FALKORDB_PASSWORD=<...>,R2_ACCOUNT_ID=<...>,R2_ACCESS_KEY_ID=<...>,R2_SECRET_ACCESS_KEY=<...>
 ```
+
+The `--network/--subnet/--vpc-egress` flags are Direct VPC egress: the
+instance gets an address in the VPC and reaches FalkorDB on the VM's internal
+IP, while `private-ranges-only` keeps Gemini/OpenAI/Telegram/blog traffic on
+the normal internet path (`all-traffic` would need paid Cloud NAT). No
+connector VMs, so no compute charge. `--timeout 600` covers the graph write.
 
 `--source .` now builds from the **Dockerfile** in this directory (Playwright
 needs Chromium + system libs, which buildpacks don't provide); the `Procfile`
@@ -109,7 +144,9 @@ app-level shared secret (Workers can't mint Google OIDC tokens); `--max-instance
 caps a retry-loop bug from burning the free tier and lets the summarizer's
 in-process 5-RPM limiter be authoritative; request-based billing (the default)
 is load-bearing — never switch to instance-based or add a poll loop.
-New secrets: `GEMINI_API_KEY` (summarizer), `TELEGRAM_BOT_TOKEN` (summary replies).
+Secrets: `GEMINI_API_KEY` (summarizer), `TELEGRAM_BOT_TOKEN` (summary replies),
+`OPENAI_API_KEY` (Graphiti extraction + embeddings), `FALKORDB_PASSWORD`, and
+the `R2_*` S3 credentials (article archive).
 
 ### Deploy gotchas (hit for real on 2026-07-27)
 
