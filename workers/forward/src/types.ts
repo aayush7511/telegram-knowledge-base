@@ -32,6 +32,7 @@ export const REPORTABLE_STATES = [
   "fetching",
   "transcribing",
   "summarizing",
+  "indexing",
   "saved",
   "failed",
 ] as const;
@@ -42,6 +43,7 @@ export interface StatusUpdate {
   state: ReportableState;
   r2_key?: string | null;
   error?: string | null;
+  summary?: string | null; // sent with `indexing` for blog jobs: the graph episode text
 }
 
 export interface Env {
@@ -49,4 +51,5 @@ export interface Env {
   CLOUD_RUN_URL: string;
   CLOUD_RUN_SECRET: string;
   WORKER2_SHARED_SECRET: string;
+  TELEGRAM_BOT_TOKEN: string;
 }

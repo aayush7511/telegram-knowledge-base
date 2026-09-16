@@ -2,6 +2,7 @@
 // real Worker in workerd with a miniflare-backed D1.
 import { SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
+import { canTransition } from "../src/db";
 import { seedJob, textJob, getRow } from "./fixtures";
 
 const SECRET = "test-worker2-secret";
@@ -101,5 +102,70 @@ describe("state updates", () => {
     const row = (await getRow("j1"))!;
     expect(row.state).toBe("transcribing");
     expect(row.error).toBeNull();
+  });
+});
+
+describe("summary column", () => {
+  it("stores the summary sent with indexing", async () => {
+    await seedJob(textJob("j1"), "summarizing");
+    const res = await post({ job_id: "j1", state: "indexing", summary: "Title\n\nThe gist." });
+    expect(res.status).toBe(200);
+    const row = (await getRow("j1"))!;
+    expect(row.state).toBe("indexing");
+    expect(row.summary).toBe("Title\n\nThe gist.");
+  });
+
+  it("keeps an existing summary when a later update omits it", async () => {
+    await seedJob(textJob("j1"), "summarizing");
+    await post({ job_id: "j1", state: "indexing", summary: "the gist" });
+    await post({ job_id: "j1", state: "saved" });
+    const row = (await getRow("j1"))!;
+    expect(row.state).toBe("saved");
+    expect(row.summary).toBe("the gist");
+  });
+});
+
+describe("transition validation", () => {
+  it.each([
+    // forward moves, including the skips text notes and native media make
+    ["forwarded", "fetching", true],
+    ["forwarded", "indexing", true],
+    ["forwarded", "summarizing", true],
+    ["summarizing", "indexing", true],
+    ["indexing", "saved", true],
+    // failed: reachable from anywhere non-terminal, and left again on a retry
+    ["indexing", "failed", true],
+    ["failed", "fetching", true],
+    ["failed", "failed", true],
+    // never backwards, never the same state twice, never out of saved
+    ["summarizing", "fetching", false],
+    ["indexing", "indexing", false],
+    ["saved", "indexing", false],
+    ["saved", "failed", false],
+  ])("%s -> %s allowed=%s", (from, to, allowed) => {
+    expect(canTransition(from, to)).toBe(allowed);
+  });
+
+  it("409s on a backwards move and leaves the row alone", async () => {
+    await seedJob(textJob("j1"), "summarizing");
+    const res = await post({ job_id: "j1", state: "fetching" });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ ok: false, error: "invalid transition summarizing -> fetching" });
+    expect((await getRow("j1"))!.state).toBe("summarizing");
+  });
+
+  it("409s on any update after saved", async () => {
+    await seedJob(textJob("j1"), "saved");
+    expect((await post({ job_id: "j1", state: "indexing" })).status).toBe(409);
+    expect((await post({ job_id: "j1", state: "failed", error: "late" })).status).toBe(409);
+    const row = (await getRow("j1"))!;
+    expect(row.state).toBe("saved");
+    expect(row.error).toBeNull();
+  });
+
+  it("lets a text note skip straight from forwarded to indexing", async () => {
+    await seedJob(textJob("j1"), "forwarded");
+    expect((await post({ job_id: "j1", state: "indexing" })).status).toBe(200);
+    expect((await getRow("j1"))!.state).toBe("indexing");
   });
 });

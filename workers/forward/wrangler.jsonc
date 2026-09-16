@@ -5,8 +5,8 @@
   "compatibility_date": "2026-07-01",
   "observability": { "enabled": true },
 
-  // Non-secret config. Secrets (CLOUD_RUN_SECRET, WORKER2_SHARED_SECRET) go in
-  // `wrangler secret put` for prod and .dev.vars locally.
+  // Non-secret config. Secrets (CLOUD_RUN_SECRET, WORKER2_SHARED_SECRET,
+  // TELEGRAM_BOT_TOKEN) go in `wrangler secret put` for prod and .dev.vars locally.
   "vars": {
     "CLOUD_RUN_URL": "https://kb-orchestrator-135554694779.us-central1.run.app"
   },
@@ -15,7 +15,13 @@
     "consumers": [
       {
         "queue": "kb-jobs",
-        "max_batch_size": 5,
+        // One job at a time, end to end. Cloud Run processes a batch serially
+        // and a graph write can take minutes under free-tier rate limits, so a
+        // batch of 5 could outlive the consumer's wall-clock limit. One
+        // consumer at a time keeps Graphiti's entity dedup serial — parallel
+        // ingests into the same graph can create the same entity twice.
+        "max_batch_size": 1,
+        "max_concurrency": 1,
         "max_retries": 5,
         // seconds between redeliveries — no hot retry loops burning Cloud Run requests.
         // No DLQ: after max_retries the message drops, but the D1 row keeps full
