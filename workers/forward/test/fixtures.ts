@@ -45,11 +45,12 @@ export interface JobRow {
   state: string;
   r2_key: string | null;
   error: string | null;
+  summary: string | null;
   updated_at: string;
 }
 
 export async function getRow(job_id: string): Promise<JobRow | null> {
-  return env.DB.prepare("SELECT job_id, state, r2_key, error, updated_at FROM jobs WHERE job_id = ?1")
+  return env.DB.prepare("SELECT job_id, state, r2_key, error, summary, updated_at FROM jobs WHERE job_id = ?1")
     .bind(job_id)
     .first<JobRow>();
 }

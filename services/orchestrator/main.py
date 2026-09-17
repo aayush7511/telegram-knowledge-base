@@ -2,10 +2,11 @@
 
 Receives job descriptors pushed by Worker 2, authenticated with a shared
 secret. Blog URLs are fully processed here: render (Playwright) → extract text +
-metadata (Trafilatura + extruct) → summarize (Gemini 2.5 Flash) → assemble a
-Response Object, log it, and reply on Telegram. Other job types remain stubs
-(native-media ASR and Instagram/YouTube Pi delegation come later). See
-../../convo_summary.md for the architecture.
+metadata (Trafilatura + extruct) → summarize (Gemini) → reply on Telegram →
+write the summary into the knowledge graph (Graphiti → FalkorDB). Plain-text
+notes go straight into the graph. Other job types remain stubs (native-media
+ASR and Instagram/YouTube Pi delegation come in v3). See ../../CLAUDE.md for the
+architecture and ../../docs/design/v2.md for the graph decisions.
 
 Processing is **synchronous**: `/jobs` does the work and only then responds, so
 everything happens inside the request window. Cloud Run only guarantees CPU
@@ -21,7 +22,9 @@ import os
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 
+import articles
 import fetcher
+import graph
 import telegram
 from extract import ResponseObject, extract_content
 from summarize import Summarizer
@@ -52,18 +55,20 @@ async def post_status(
     state: str,
     r2_key: str | None = None,
     error: str | None = None,
+    summary: str | None = None,
 ) -> None:
     """Report a job state change to Worker 2, which owns the D1 writes.
 
     Best-effort: failures are logged but never propagate — D1 state drives
     retries, not this callback. No-op until WORKER2_STATUS_URL is configured.
     Async so it never blocks the event loop while a job holds the request open.
+    `summary` rides along with `indexing` so D1 keeps the graph episode text.
     """
     status_url = os.environ.get("WORKER2_STATUS_URL")
     if not status_url:
         log.info("status update skipped (WORKER2_STATUS_URL unset): job_id=%s state=%s", job_id, state)
         return
-    body = {"job_id": job_id, "state": state, "r2_key": r2_key, "error": error}
+    body = {"job_id": job_id, "state": state, "r2_key": r2_key, "error": error, "summary": summary}
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(
@@ -77,7 +82,7 @@ async def post_status(
 
 
 async def process_blog_job(job: dict) -> None:
-    """Blog pipeline: fetching → summarizing → saved (or failed), with a reply.
+    """Blog pipeline: fetching → summarizing → reply → indexing → saved (or failed).
 
     Runs inline in the request. Never raises: a failure is recorded as terminal
     `failed` in D1 and swallowed, so Worker 2 still gets a 2xx and acks the
@@ -93,6 +98,7 @@ async def process_blog_job(job: dict) -> None:
         await post_status(job_id, "fetching")
         html = await fetcher.render(url)
         ro: ResponseObject = extract_content(html, url)
+        await articles.store_article(job_id, ro.text)
 
         await post_status(job_id, "summarizing")
         # summarize() blocks (rate-limiter sleeps + a sync SDK call), so it goes
@@ -113,9 +119,44 @@ async def process_blog_job(job: dict) -> None:
         else:
             log.info("telegram reply skipped (token/chat_id missing): job_id=%s", job_id)
 
+        # The reply is out, so the user has the summary even if the graph write
+        # fails — that failure is recoverable from D1, which gets the episode
+        # text with the `indexing` status.
+        body, source_description = graph.blog_episode(ro)
+        await post_status(job_id, "indexing", summary=body)
+        await graph.write_episode(
+            job_id,
+            name=ro.title or url,
+            body=body,
+            source_description=source_description,
+            reference_time=graph.parse_time_received(job.get("time_received")),
+        )
+
         await post_status(job_id, "saved")
     except Exception as exc:
         log.exception("blog job failed: job_id=%s", job_id)
+        await post_status(job_id, "failed", error=str(exc))
+
+
+async def process_text_job(job: dict) -> None:
+    """Text note: indexing → saved (or failed). No reply — the 👌 reaction is the ack."""
+    job_id = job["job_id"]
+    try:
+        text = (job.get("text") or "").strip()
+        if not text:
+            raise ValueError("text job missing text")
+
+        await post_status(job_id, "indexing")
+        await graph.write_episode(
+            job_id,
+            name=text.splitlines()[0][:60],
+            body=text,
+            source_description="telegram text note",
+            reference_time=graph.parse_time_received(job.get("time_received")),
+        )
+        await post_status(job_id, "saved")
+    except Exception as exc:
+        log.exception("text job failed: job_id=%s", job_id)
         await post_status(job_id, "failed", error=str(exc))
 
 
@@ -139,11 +180,15 @@ async def receive_job(request: Request):
 
     log.info("job received: %s", job)
 
-    if job.get("content_type") == "url" and job.get("url_source") == "blog":
+    content_type = job.get("content_type")
+    if content_type == "url" and job.get("url_source") == "blog":
         # Synchronous: Worker 2's push stays open for the full pipeline
-        # (~20-30s). Outcome is recorded in D1 either way, so the response is
-        # 2xx regardless — see process_blog_job.
+        # (render + summarize ~20-30s, plus the graph write). Outcome is
+        # recorded in D1 either way, so the response is 2xx regardless — see
+        # process_blog_job.
         await process_blog_job(job)
+    elif content_type == "text":
+        await process_text_job(job)
     else:
         # Other job types not built yet — placeholder status so the round trip
         # stays testable end to end.

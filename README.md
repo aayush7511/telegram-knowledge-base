@@ -55,7 +55,7 @@ Cloud provisioning, secrets, deploy, and webhook registration: see [workers/inge
 
 ## Features in Progress
 
-Everything currently built. All of this is **implemented, tested (69 tests), deployed, and verified live**. Messages now flow Telegram → queue → Worker 2 → Cloud Run and status updates flow back into D1 — but Cloud Run does no real processing yet.
+Everything currently built. All of this is **implemented, tested (111 tests), deployed, and verified live**. Messages flow Telegram → queue → Worker 2 → Cloud Run → knowledge graph, and status updates flow back into D1 — but Cloud Run does no real processing yet.
 
 **Worker 1 — `kb-ingest` (Telegram webhook receiver), deployed on workers.dev**
 - Webhook auth: `X-Telegram-Bot-Api-Secret-Token` check, 401 otherwise
@@ -72,29 +72,36 @@ Everything currently built. All of this is **implemented, tested (69 tests), dep
 - Provisioned infra: `kb-jobs` queue, `kb-raw-media` R2 bucket (2-day expiry lifecycle rule on `raw-media/`), `kb-jobs` D1 database (2 migrations applied), secrets in Wrangler, webhook registered with `allowed_updates=["message"]`
 
 **Worker 2 — `kb-forward` (queue consumer + D1 proxy), deployed on workers.dev**
-- `queue()` consumer on `kb-jobs` (batch 5, 5 retries, 60s retry delay): POSTs each job descriptor to Cloud Run `/jobs` with shared-secret auth, marks the D1 row `forwarded` on success
+- `queue()` consumer on `kb-jobs` (one job at a time: batch 1, concurrency 1; 5 retries, 60s retry delay): POSTs each job descriptor to Cloud Run `/jobs` with shared-secret auth, marks the D1 row `forwarded` on success
 - Per-message ack/retry — a failing job is redelivered without recycling its batch-mates
-- `POST /status` — Cloud Run's only path to D1: `{job_id, state, r2_key?, error?}`, secret-authed; validates state against the pipeline machine, COALESCEs `r2_key`, 404s unknown jobs
+- `POST /status` — Cloud Run's only path to D1: `{job_id, state, r2_key?, error?, summary?}`, secret-authed; validates transitions against the pipeline order (forward-only, `saved` terminal, 409 otherwise), COALESCEs `r2_key`/`summary`, 404s unknown jobs
+- 👀 → 👌: when the last job from a Telegram message reaches `saved`, swaps Worker 1's 👀 for 👌 (best-effort)
 - No DLQ by choice: dropped messages stay recoverable because every D1 row carries its content
 - Tests reuse Worker 1's migrations as the single schema truth; Cloud Run is faked in-test
 
-**Cloud Run stub — `kb-orchestrator` (processing orchestrator, contract only), deployed on us-central1**
-- `POST /jobs` intake with `X-KB-Secret` shared-secret auth (401 otherwise); logs the descriptor, no processing yet
-- Status-update callback to Worker 2 implemented per contract (`{job_id, state, r2_key, error}` + secret header); no-op until Worker 2 exists
-- Deployed via source buildpacks, request-based billing, scales to zero, `--max-instances 1` free-tier cap
+**Cloud Run — `kb-orchestrator` (processing orchestrator), deployed on us-central1**
+- `POST /jobs` intake with `X-KB-Secret` shared-secret auth (401 otherwise); the whole pipeline runs synchronously inside the request (request-based billing, scales to zero, `--max-instances 1`, `--timeout 600`)
+- Blog URLs: Playwright render → Trafilatura text + extruct metadata → cleaned text archived to R2 (`articles/{job_id}.txt`) → Gemini summary → Telegram reply → Graphiti episode (title + summary; URL/site/author as provenance) → FalkorDB
+- Text notes: straight into the graph as an episode, no reply — the 👌 is the acknowledgement
+- Graphiti runs `gpt-4.1-mini` (both slots, temperature 0) + `text-embedding-3-small` on OpenAI's complimentary data-sharing tokens; episodes are keyed by `job_id` so reprocessing never duplicates
+- Status updates to Worker 2 at each stage (`fetching`/`summarizing`/`indexing`/`saved`/`failed`); the `indexing` post carries the episode text so the graph can be rebuilt from D1
 - See [services/orchestrator/README.md](services/orchestrator/README.md)
+
+**FalkorDB — `falkordb` VM (knowledge-graph store), GCE e2-micro in us-central1**
+- FalkorDB in Docker on Container-Optimized OS, data on the persistent stateful partition with append-only persistence; survives reboots
+- Reached by Cloud Run over Direct VPC egress on the internal IP — port 6379 is never open to the internet; password-protected
+- One graph, `second-brain`, holding Episodic nodes, Entity nodes, `MENTIONS` and temporal `RELATES_TO` edges, with range + full-text indexes and stored embeddings for v3 retrieval
+- See [infra/falkordb/README.md](infra/falkordb/README.md)
 
 ## Features Not Started
 
-Everything designed (see [convo_summary.md](convo_summary.md)) but with zero code written:
+Planned (see [ROADMAP.md](ROADMAP.md)) but with zero code written:
 
-- **Cloud Run orchestrator (processing)** — the deployed stub does no work yet; still to build: handle `text`/`blog` jobs directly (HTTP fetch + readability extraction + LLM summarization), pull native media from R2 via S3-compatible API and send it to Groq for ASR, delegate Instagram/YouTube URLs to the Pi
 - **Raspberry Pi fetcher** — polls for fetch jobs over outbound HTTPS (no port-forwarding), runs yt-dlp with dedicated-account cookies + `bgutil-ytdlp-pot-provider` for YouTube PO tokens, normalizes audio with ffmpeg, uploads to R2; Layer-2 URL validation (e.g. IG `/p/` posts that turn out to be image-only) with fail/reroute
 - **Groq integration** — Whisper large-v3-turbo transcription (fallback: local faster-whisper distil-large-v3 int8); Llama 3.3 70B summarization/curation; YouTube auto-caption shortcut to skip ASR when quality suffices
-- **Knowledge graph** — self-hosted Graphiti + FalkorDB via Docker on the Pi; ingestion of transcripts/summaries with temporal metadata; retrieval that surfaces related past content in conversation
-- **Pipeline state progression** — `forwarded` / `fetching` / `transcribing` / `summarizing` / `saved` / `failed` state updates through the full flow (only `received` → `queued` happens today)
+- **Knowledge-graph retrieval** — in-chat questions answered from the graph, a connector for Claude / Claude Code, and the weekly Leiden community recompute (v3)
+- **Pipeline states for media** — `transcribing` (and `fetching` via the Pi) only become real once native media and Instagram/YouTube are processed (v3); text notes and blog URLs already run the full state machine
 - **Ingestion-complete UX** — final Telegram reply with a short summary of what was captured (or a failure message naming the stage that died)
 - **Raw media cleanup** — explicit R2 delete after graph ingestion (`saved`); today only the 2-day lifecycle rule exists
 - **`job_events` audit table** — append-only per-stage timing/audit trail alongside `jobs`
-- **Curation policy** — the highest-risk open question: deciding what's worth remembering vs. discarding from long/dense content, before the graph layer is built
 - **Long-content handling** — chunked/map-reduce summarization for hour-long videos and large PDFs; size caps with "too big to ingest" messaging

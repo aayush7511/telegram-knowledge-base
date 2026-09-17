@@ -1,6 +1,7 @@
 import type { Env, JobDescriptor, ReportableState, StatusUpdate } from "./types";
 import { REPORTABLE_STATES } from "./types";
-import { applyStatusUpdate, markForwarded } from "./db";
+import { allJobsSaved, applyStatusUpdate, markForwarded } from "./db";
+import { setDoneReaction } from "./telegram";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -42,7 +43,7 @@ export default {
 
   // Status-update endpoint: Cloud Run's only path to D1. Shared-secret auth —
   // this is a public workers.dev URL otherwise.
-  async fetch(request, env): Promise<Response> {
+  async fetch(request, env, ctx): Promise<Response> {
     const { pathname } = new URL(request.url);
     if (request.method !== "POST" || pathname !== "/status") {
       return new Response("not found", { status: 404 });
@@ -67,8 +68,22 @@ export default {
       );
     }
 
-    const found = await applyStatusUpdate(env.DB, update, new Date().toISOString());
-    if (!found) return json({ ok: false, error: `unknown job_id ${update.job_id}` }, 404);
+    const result = await applyStatusUpdate(env.DB, update, new Date().toISOString());
+    if (!result.ok) {
+      if (result.reason === "not_found") return json({ ok: false, error: `unknown job_id ${update.job_id}` }, 404);
+      return json({ ok: false, error: `invalid transition ${result.from} -> ${update.state}` }, 409);
+    }
+
+    // The message's 👀 becomes 👌 once everything from it is in the graph.
+    // Best-effort, like every Telegram call on the status path: a failure is
+    // logged and never fails the update — D1 state is what matters.
+    if (update.state === "saved" && (await allJobsSaved(env.DB, result.chat_id, result.message_id))) {
+      ctx.waitUntil(
+        setDoneReaction(env.TELEGRAM_BOT_TOKEN, result.chat_id, result.message_id).catch((e) =>
+          console.error(`reaction failed chat=${result.chat_id} message=${result.message_id}`, e),
+        ),
+      );
+    }
     return json({ ok: true });
   },
 } satisfies ExportedHandler<Env, JobDescriptor>;
