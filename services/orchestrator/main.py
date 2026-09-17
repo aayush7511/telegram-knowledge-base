@@ -122,6 +122,10 @@ async def process_blog_job(job: dict) -> None:
         # The reply is out, so the user has the summary even if the graph write
         # fails — that failure is recoverable from D1, which gets the episode
         # text with the `indexing` status.
+        # `summary` here is the D1 column name (predates the full-text switch,
+        # see graph.py) — it now holds the full episode body, not a short
+        # summary, which only strengthens its purpose: rebuilding the graph
+        # from D1 alone without re-fetching a page that may have changed.
         body, source_description = graph.blog_episode(ro)
         await post_status(job_id, "indexing", summary=body)
         await graph.write_episode(

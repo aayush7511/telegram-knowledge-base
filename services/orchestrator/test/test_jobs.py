@@ -94,15 +94,17 @@ def test_blog_happy_path(monkeypatch):
     assert sent["chat_id"] == 42 and sent["message_id"] == 7
     assert sent["ro"].summary == "SUMMARY"
 
-    # graph episode: title + summary in the body, provenance in source_description
+    # graph episode: title + full cleaned article text in the body (not the
+    # summary — that only goes into the Telegram reply), provenance in
+    # source_description
     [ep] = seen["episodes"]
     assert ep["job_id"] == "j1"
     assert ep["name"] == "T"
-    assert ep["body"] == "T\n\nSUMMARY"
+    assert ep["body"] == "T\n\nbody"
     assert ep["source_description"] == "blog: https://example.com/post | site: S | author: A"
     assert ep["reference_time"].isoformat() == "2026-09-16T10:00:00+00:00"
     # D1 gets the same text with the indexing status, so the graph is rebuildable
-    assert seen["summaries"] == {"indexing": "T\n\nSUMMARY"}
+    assert seen["summaries"] == {"indexing": "T\n\nbody"}
     # the cleaned article text is archived before summarization
     assert seen["archived"] == {"j1": "body"}
 
@@ -139,7 +141,7 @@ def test_blog_graph_failure_after_reply(monkeypatch):
     assert [s for s, _ in states] == ["fetching", "summarizing", "indexing", "failed"]
     assert "FalkorDB unreachable" in states[-1][1]
     assert sent["ro"].summary == "SUMMARY"
-    assert seen["summaries"] == {"indexing": "T\n\nSUMMARY"}
+    assert seen["summaries"] == {"indexing": "T\n\nbody"}
 
 
 def test_text_note_goes_straight_to_the_graph(monkeypatch):

@@ -15,6 +15,14 @@ VPC. Everything here follows what the M0 spike established (docs/design/v2.md):
   Re-running a job then reuses the same episode instead of duplicating it.
 - Same model in both Graphiti slots (an unset `small_model` silently falls
   back to gpt-4.1-nano) at temperature 0, so reprocessing is reproducible.
+
+Episode body: the full cleaned article, not just the summary — confirmed in
+spikes/full-article-episode (2026-09-17). Summary-only was cheaper and cleaner
+but discarded real facts (e.g. co-founders a summary compresses to one name).
+Full text recovers them at ~2.3x the tokens. It also pulls in newsletter-style
+extras (sponsor lines, "further reading" link roundups) — tried and reverted a
+heuristic to strip those, since they're pointers to related material that may
+be worth branching the graph out to later, not pure noise to discard.
 """
 from __future__ import annotations
 
@@ -68,12 +76,13 @@ async def get_graphiti() -> Graphiti:
 def blog_episode(ro: ResponseObject) -> tuple[str, str]:
     """(episode body, source_description) for a blog job.
 
-    Body is title + summary only. URL, site, and author go in source_description,
-    which Graphiti's text-extraction prompt never sees — in M0 a metadata header
-    in the body turned `anthropic.com` and `paulgraham.com` into entities and
+    Body is title + the full cleaned article text, not the summary — see the
+    module docstring. URL, site, and author go in source_description, which
+    Graphiti's text-extraction prompt never sees — in M0 a metadata header in
+    the body turned `anthropic.com` and `paulgraham.com` into entities and
     crowded out the real content.
     """
-    body = f"{ro.title}\n\n{ro.summary}" if ro.title else (ro.summary or "")
+    body = f"{ro.title}\n\n{ro.text}" if ro.title else ro.text
     meta = [f"blog: {ro.url}"] + [f"{k}: {v}" for k, v in (("site", ro.sitename), ("author", ro.author)) if v]
     return body, " | ".join(meta)
 
