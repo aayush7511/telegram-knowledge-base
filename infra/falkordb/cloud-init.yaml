@@ -6,7 +6,12 @@
 # - Data lives on COS's persistent stateful partition (the root FS is
 #   read-only), mounted at the image's data dir /var/lib/falkordb/data, so it
 #   survives stop/start and reboots.
-# - BROWSER=0 disables the bundled web UI (a Node app the 1 GB VM can't spare).
+# - BROWSER=1 enables the bundled web UI on port 3000, published on the VM's
+#   own network stack (not exposed further: the default network's firewall
+#   only opens tcp:22/3389/icmp externally, so 3000 is reachable only via an
+#   SSH tunnel or from inside the VPC). Uses a bit more of the 1 GB VM's RAM
+#   for the extra Node process; revert to BROWSER=0 + drop -p 3000:3000 to
+#   reclaim it if that ever matters.
 # - systemd restarts the container after a reboot or crash.
 # - Append-only persistence + a snapshot every 5 min if anything changed.
 # - Image pinned to the digest the M0 spike ran against (graph module 42004).
@@ -28,8 +33,9 @@ write_files:
     ExecStartPre=-/usr/bin/docker rm falkordb
     ExecStart=/usr/bin/docker run --name falkordb \
       -p 6379:6379 \
+      -p 3000:3000 \
       -v /mnt/stateful_partition/falkordb:/var/lib/falkordb/data \
-      -e BROWSER=0 \
+      -e BROWSER=1 \
       -e "REDIS_ARGS=--requirepass __FALKORDB_PASSWORD__ --appendonly yes --save 300 1" \
       falkordb/falkordb@sha256:adbddd418916c25618564ff8597a919b08bc76452ebeb74eb985c38d7281df62
     ExecStop=/usr/bin/docker stop falkordb
