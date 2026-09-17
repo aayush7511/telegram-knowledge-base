@@ -5,17 +5,18 @@ import graph
 from extract import ResponseObject
 
 
-def test_blog_episode_body_is_title_and_summary_only():
-    ro = ResponseObject(url="https://x.test/p", title="Title", author="Ann", sitename="X", text="...", summary="Gist.")
+def test_blog_episode_body_is_title_and_full_text():
+    ro = ResponseObject(url="https://x.test/p", title="Title", author="Ann", sitename="X",
+                         text="The full cleaned article body.", summary="Gist.")
     body, source = graph.blog_episode(ro)
-    assert body == "Title\n\nGist."
+    assert body == "Title\n\nThe full cleaned article body."
     assert source == "blog: https://x.test/p | site: X | author: Ann"
 
 
 def test_blog_episode_omits_missing_metadata():
-    ro = ResponseObject(url="https://x.test/p", title=None, author=None, sitename=None, summary="Gist.")
+    ro = ResponseObject(url="https://x.test/p", title=None, author=None, sitename=None, text="Body text.")
     body, source = graph.blog_episode(ro)
-    assert body == "Gist."
+    assert body == "Body text."
     assert source == "blog: https://x.test/p"
 
 
