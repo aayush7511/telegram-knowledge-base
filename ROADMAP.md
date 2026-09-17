@@ -22,7 +22,7 @@ Each version is scoped as **Goals** (outcomes this version must achieve), **Non-
 3. Bot fetches the page, extracts the article text and metadata, and summarizes it
 4. Bot replies in the same thread with the summary
 
-## v2 — Knowledge graph
+## v2 — Knowledge graph (done 2026-09-17)
 
 Design decisions: [docs/design/v2.md](docs/design/v2.md)
 
