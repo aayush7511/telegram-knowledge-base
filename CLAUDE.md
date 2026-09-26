@@ -1,6 +1,6 @@
 # telegram-knowledge-base
 
-Personal AI memory tool: Telegram → Cloudflare Workers → Cloudflare Queue → Cloud Run → Graphiti/FalkorDB knowledge graph (v2), with Groq reserved for speech-to-text (v3).
+Personal AI memory tool: Telegram → Cloudflare Workers → Cloudflare Queue → Cloud Run → Graphiti/FalkorDB knowledge graph (v2), with Groq reserved for speech-to-text (v4).
 
 `convo_summary.md` (the previous living design doc) has been deleted intentionally — its durable content is folded into this file. Don't recreate it; extend this file instead.
 
@@ -28,7 +28,7 @@ npx -y @mermaid-js/mermaid-cli -i docs/architecture.mmd -o docs/architecture.svg
 | Google Cloud Run over Fly.io | Fly.io killed its free tier (2024). Cloud Run has a permanent free tier: 2M requests, ~50 CPU-hours, 360k GiB-sec/month |
 | Cloud Run must be push-triggered, NOT polling | Request-based billing = CPU billed only while handling a request. A poll loop forces instance-based (always-on) billing and burns the free tier |
 | Home Pi for yt-dlp fetches (planned) | Instagram/YouTube flag datacenter IPs on sight; residential IP required |
-| Groq for ASR only (planned, v3) | Whisper large-v3-turbo ~216x realtime, free tier covers personal volume (28.8K audio-seconds/day ≈ 8h); local fallback faster-whisper distil-large-v3 int8. Groq is deliberately **not** used for Graphiti: graph ingestion makes several LLM calls per episode and would burn the free tier that ASR and future text tasks need, and Groq's structured-output mode has reported schema-compliance problems that Graphiti's extraction depends on. |
+| Groq for ASR only (planned, v4) | Whisper large-v3-turbo ~216x realtime, free tier covers personal volume (28.8K audio-seconds/day ≈ 8h); local fallback faster-whisper distil-large-v3 int8. Groq is deliberately **not** used for Graphiti: graph ingestion makes several LLM calls per episode and would burn the free tier that ASR and future text tasks need, and Groq's structured-output mode has reported schema-compliance problems that Graphiti's extraction depends on. |
 | Graphiti LLM: OpenAI `gpt-4.1-mini` (v2) | Graphiti needs reliable structured output; OpenAI is its default provider, and the Zep paper built its benchmark graphs with `gpt-4o-mini`. Same model in both Graphiti slots (`model` + `small_model` — an unset `small_model` silently falls back to nano), at temperature 0 so reprocessing a job reproduces the same extraction. Runs on OpenAI's data-sharing complimentary tokens (free up to 2.5M tokens/day on mini/nano models) — see the hard-constraint exception. Confirmed in M0 over `gpt-5-nano`, which linked entities to episodes that never mention them. Embeddings: OpenAI `text-embedding-3-small` — Gemini's free tier (100 requests/min, one request per item from Graphiti) ran out mid-test in M0. Details: [docs/design/v2.md](docs/design/v2.md#graphiti-llm-provider). |
 | Graphiti + FalkorDB on GCE e2-micro (v2) | FalkorDB over Neo4j: GraphBLAS sparse-matrix internals are faster for global community detection, which we'll run periodically (v3) as a background job to correct Graphiti's local/greedy community assignment drift; Neo4j GDS Leiden is behind the paid tier on AuraDB Free. FalkorDB runs in Docker on a GCE e2-micro (always-free tier) with Container-Optimized OS (~150MB OS + ~150MB FalkorDB, well within 1GB). Graphiti handles standard retrieval; global Leiden (v3) runs via Python igraph on a schedule and writes community labels back. |
 | Cloud Run → FalkorDB connectivity via Direct VPC egress (v2) | Serverless VPC Access connector costs ~$5–15/month (minimum 2 underlying VM instances) — violates $0 constraint. Direct VPC egress needs no connector VMs, only per-GB network transfer (free in-zone, ~$0.01/GB cross-zone → fractions of a cent/month, accepted). Deploy with `--vpc-egress private-ranges-only` (`all-traffic` would need paid Cloud NAT for internet access); firewall allows tcp:6379 only from Cloud Run's subnet; FalkorDB password via environment variable. Public IP rejected: Cloud Run's egress ranges are shared by every GCP customer in the region, and Redis would carry the password in plaintext. |
@@ -56,7 +56,7 @@ npx -y @mermaid-js/mermaid-cli -i docs/architecture.mmd -o docs/architecture.svg
   content_type: "text" | "voice" | "photo" | "video" | "document" | "url",
   text: string,               // only for "text" — inline, Telegram caps at 4,096 chars
   url: string,                // only for "url"
-  url_source: "instagram" | "youtube" | "blog",
+  url_source: "instagram" | "youtube" | "blog" | "x" | "reddit" | "stackexchange" | "github" | "pdf",
   media: { r2_key, mime_type, size_bytes, duration_seconds },  // binary types only
   caption: string             // optional, also carries prose for fanned-out URL jobs
 }

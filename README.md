@@ -100,7 +100,7 @@ Planned (see [ROADMAP.md](ROADMAP.md)) but with zero code written:
 - **Raspberry Pi fetcher** — polls for fetch jobs over outbound HTTPS (no port-forwarding), runs yt-dlp with dedicated-account cookies + `bgutil-ytdlp-pot-provider` for YouTube PO tokens, normalizes audio with ffmpeg, uploads to R2; Layer-2 URL validation (e.g. IG `/p/` posts that turn out to be image-only) with fail/reroute
 - **Groq integration** — Whisper large-v3-turbo transcription (fallback: local faster-whisper distil-large-v3 int8); Llama 3.3 70B summarization/curation; YouTube auto-caption shortcut to skip ASR when quality suffices
 - **Knowledge-graph retrieval** — in-chat questions answered from the graph, a connector for Claude / Claude Code, and the weekly Leiden community recompute (v3)
-- **Pipeline states for media** — `transcribing` (and `fetching` via the Pi) only become real once native media and Instagram/YouTube are processed (v3); text notes and blog URLs already run the full state machine
+- **Pipeline states for media** — `fetching` becomes real once Instagram/YouTube are fetched (v3) and `transcribing` once native media is transcribed (v4); text notes and blog URLs already run the full state machine
 - **Ingestion-complete UX** — final Telegram reply with a short summary of what was captured (or a failure message naming the stage that died)
 - **Raw media cleanup** — explicit R2 delete after graph ingestion (`saved`); today only the 2-day lifecycle rule exists
 - **`job_events` audit table** — append-only per-stage timing/audit trail alongside `jobs`

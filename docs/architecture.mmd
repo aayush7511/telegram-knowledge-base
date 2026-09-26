@@ -9,11 +9,11 @@ flowchart TD
     BLOG --> SUM["Gemini summarize"]
     SUM --> REPLY[Telegram reply with summary]
 
-    CR -->|native media, planned v3| MEDIA["pull bytes from R2"]
+    CR -->|native media, planned v4| MEDIA["pull bytes from R2"]
     CR -->|Instagram/YouTube URLs, planned v3| PI["Home Raspberry Pi (planned, v3)<br/>polls for fetch jobs, outbound HTTPS<br/>yt-dlp + cookies + PO-token provider"]
     PI -->|uploads audio| R2[(R2)]
     R2 --> MEDIA
-    MEDIA --> GROQ["Groq API (planned, v3)<br/>Whisper large-v3-turbo — ASR only"]
+    MEDIA --> GROQ["Groq API (planned, v4)<br/>Whisper large-v3-turbo — ASR only"]
     GROQ -->|transcript| SUM
 
     SUM -->|episode, planned v2| GRAPHITI["Graphiti (planned, v2)<br/>library inside Cloud Run:<br/>entity + relationship extraction"]

@@ -35,7 +35,7 @@ Design decisions: [docs/design/v2.md](docs/design/v2.md)
 **Non-Goals**
 - No retrieval of any kind yet — no in-chat questions, no query connector (v3)
 - No weekly global Leiden community recompute (v3)
-- Native media is not written to the graph — it isn't transcribed until v3
+- Native media is not written to the graph — it isn't transcribed until v4
 - No cross-user graph sharing — the graph remains scoped to the single owner
 - No automatic re-curation of already-ingested items if the policy changes later
 
@@ -45,14 +45,45 @@ Design decisions: [docs/design/v2.md](docs/design/v2.md)
 3. Bot writes the summary into the knowledge graph as an episode timestamped with when the message was received
 4. The job ends as `saved` in D1, the bot's 👀 on the message changes to 👌, and its entities and relationships are in FalkorDB ready for v3 retrieval
 
-## v3 — Native media + retrieval
+## v3 — Reach, retrieval + public brain
+
+Design decisions: [docs/design/v3.md](docs/design/v3.md)
+
+**Goals**
+- Links to YouTube, X, Reddit, Stack Overflow, and GitHub get fetched and processed like blog URLs, using the text each source already has (captions, post text, answers) — one pinned tool per source, chosen from [Agent-Reach](https://github.com/Panniantong/Agent-Reach)'s research ([per-source tools](docs/design/v3.md#per-source-tools-mined-from-agent-reach-2026-09-26))
+- PDFs are processed, both as links and as files sent in Telegram (text PDFs; scanned ones need OCR)
+- A link to a page with nothing to remember (a profile, a search page, a login wall, an empty or blocked page) gets a "not supported" reply and is never saved
+- `fetching` reflects real work for every URL source, not just blogs
+- The graph is retrievable: questions asked in the chat get answers grounded in past content, and an MCP connector lets Claude Code, Codex, and other MCP clients query the graph and save new things to it
+- **Public brain**: a public, read-only web page where anyone can browse the graph built from what the owner reads and ask it questions, with answers grounded in it and linking back to the source articles
+- Private content (text notes, voice memos) can never reach the public page — which side an item lands on is decided when it's written to the graph, not filtered out when the graph is read
+- Public queries can't exceed the $0 constraint — a hard daily cap turns querying off rather than drawing down credit
+- A weekly global Leiden recompute corrects Graphiti's incremental community drift (design carried over in [docs/design/v2.md](docs/design/v2.md#moved-to-v3))
+
+**Non-Goals**
+- No audio transcription — a video with no captions, and any native voice memo or video, waits for v4
+- The bot doesn't search the web — it ingests the links it's sent
+- Visitors to the public brain can't add content, sign in, or get a graph of their own — it's read-only and fed only by the owner
+- The public brain never serves full article text — facts, entities, and links to the source only
+
+**User Journey**
+1. User pastes a YouTube link into the Telegram chat
+2. Bot reacts 👀, fetches the video's captions and metadata, summarizes them, and replies with the summary
+3. The summary lands in the public graph and the 👀 changes to 👌
+4. Later, in Claude Code, the user asks what that video said about agent memory, and the answer comes from the graph
+
+**User Journey (public brain visitor)**
+1. Visitor opens the public brain page and sees the graph of what the owner has been reading, most recent first
+2. Visitor asks "what's been read about agent memory?"
+3. Page answers from the public graph, citing the articles each fact came from, with links
+
+## v4 — Native media transcription
 
 **Goals**
 - A voice memo or video sent to the bot gets transcribed and summarized automatically
-- Instagram/YouTube links get fetched (via the home Pi) and processed the same way as native media
-- Pipeline states `fetching` / `transcribing` / `summarizing` reflect real work, not just the blog path
-- The graph is retrievable: questions asked in the chat get answers grounded in past content, and a separate connector lets Claude / Claude Code query the graph directly
-- A weekly global Leiden recompute corrects Graphiti's incremental community drift (design carried over in [docs/design/v2.md](docs/design/v2.md#moved-to-v3))
+- YouTube videos without usable captions get transcribed instead of skipped
+- Instagram posts and reels get fetched (via the home Pi) and transcribed
+- `transcribing` reflects real work
 
 **Non-Goals**
 - No live/streaming transcription — only complete, already-sent files
@@ -64,7 +95,7 @@ Design decisions: [docs/design/v2.md](docs/design/v2.md)
 3. Bot downloads the audio, transcribes it with Whisper, and summarizes the transcript
 4. Bot replies in the same thread with the summary
 
-## v4 — Reliability + UX polish
+## v5 — Reliability + UX polish
 
 **Goals**
 - Every ingested item ends in a clear, final Telegram reply — either a summary or a specific failure reason
@@ -72,7 +103,7 @@ Design decisions: [docs/design/v2.md](docs/design/v2.md)
 - Long content (hour-long videos, large PDFs) is handled without failing outright
 
 **Non-Goals**
-- No new content types beyond what v1–v3 already accept
+- No new content types beyond what v1–v4 already accept
 - No user-facing settings/configuration UI — still a single hardcoded owner and pipeline
 
 **User Journey**
@@ -86,7 +117,11 @@ Design decisions: [docs/design/v2.md](docs/design/v2.md)
 - Revisit whether media albums (`media_group_id`) need stronger grouping once the graph exists, vs. today's independent-jobs-per-item approach
 - A dedicated retrieval/query interface beyond inline conversational surfacing (e.g. on-demand recap or digest generation)
 - Revisit a shared package for Worker 1/Worker 2 duplicated types if a third consumer appears
+- Resolve short links (`bit.ly`, `t.co`, `tinyurl.com`) in Worker 1 before checking them, so the link rules see the real destination
+- RSS subscriptions — auto-ingest new posts from followed sites. Needs a scheduled job and an exception to "sending is the curation act" ([v3 notes](docs/design/v3.md#per-source-tools-mined-from-agent-reach-2026-09-26))
 
 ## Open questions to resolve before committing a version
 
 None open for v2 — M0 settled the Graphiti model (`gpt-4.1-mini` at temperature 0), embeddings, and episode format; see [docs/design/v2.md](docs/design/v2.md#m0-results-2026-09-11).
+
+**v3** — open; tracked in [docs/design/v3.md](docs/design/v3.md#open-questions).
