@@ -1,8 +1,8 @@
-"""POST /jobs: blog and text branches — state machine, Telegram reply, graph
+"""POST /jobs: URL and text branches — state machine, Telegram reply, graph
 write, failure handling.
 
-fetcher.render / summarizer / telegram.send_summary / graph.write_episode /
-articles.store_article are mocked so the test is offline; post_status is
+fetcher.render / extract_content / summarizer / telegram / graph.write_episode
+/ articles.store_article are mocked so the test is offline; post_status is
 captured to assert the state progression.
 """
 from fastapi.testclient import TestClient
@@ -11,8 +11,9 @@ import main
 from extract import ResponseObject
 
 HEADERS = {"X-KB-Secret": "s"}
-# Long enough to pass the article-text minimum (main.MIN_ARTICLE_CHARS).
-ARTICLE = "body " * 250
+# Long enough to pass the article-text minimum and to get a summary
+# (sources.MIN_ARTICLE_CHARS, main.SUMMARY_MIN_CHARS).
+ARTICLE = "body " * 400
 BLOG_JOB = {
     "job_id": "j1",
     "content_type": "url",
@@ -63,9 +64,9 @@ def _wire(monkeypatch, *, render=None, write_episode=None, text=ARTICLE):
     async def default_render(url, **kw):
         return "<html>body</html>"
 
-    monkeypatch.setattr(main.fetcher, "render", render or default_render)
+    monkeypatch.setattr(main.sources.fetcher, "render", render or default_render)
     monkeypatch.setattr(
-        main, "extract_content",
+        main.sources.extract, "extract_content",
         lambda html, url: ResponseObject(url=url, title="T", author="A", sitename="S", text=text),
     )
 
@@ -154,7 +155,7 @@ def test_blog_page_with_too_little_text_is_not_supported(monkeypatch):
 
 def test_blog_http_error_is_not_supported(monkeypatch):
     async def blocked(url, **kw):
-        raise main.fetcher.PageBlocked(403)
+        raise main.sources.fetcher.PageBlocked(403)
 
     states, sent, seen = _wire(monkeypatch, render=blocked)
     resp = TestClient(main.app).post("/jobs", headers=HEADERS, json=BLOG_JOB)
@@ -181,6 +182,37 @@ def test_blog_graph_failure_after_reply(monkeypatch):
     assert "FalkorDB unreachable" in states[-1][1]
     assert sent["ro"].summary == "SUMMARY"
     assert seen["summaries"] == {"indexing": f"T\n\n{ARTICLE}"}
+
+
+def test_short_item_skips_summary_and_reply(monkeypatch):
+    """A short item (a post, a one-paragraph answer) goes straight to the graph."""
+    states, sent, seen = _wire(monkeypatch)
+
+    async def fetch_post(url):
+        return ResponseObject(url=url, title=None, author="karpathy", text="A short post.")
+
+    monkeypatch.setitem(main.sources.FETCHERS, "x", fetch_post)
+    job = {**BLOG_JOB, "url_source": "x", "url": "https://x.com/karpathy/status/1"}
+    resp = TestClient(main.app).post("/jobs", headers=HEADERS, json=job)
+
+    assert resp.status_code == 200
+    assert [s for s, _ in states] == ["fetching", "indexing", "saved"]
+    assert sent == {} and seen["texts"] == []  # 👌 is the acknowledgement
+    [ep] = seen["episodes"]
+    assert ep["name"] == "https://x.com/karpathy/status/1"  # no title → the url
+    assert ep["body"] == "A short post."
+    assert ep["source_description"] == "x: https://x.com/karpathy/status/1 | author: karpathy"
+    assert seen["archived"] == {"j1": "A short post."}
+
+
+def test_url_source_without_a_fetcher_uses_stub(monkeypatch):
+    states, sent, seen = _wire(monkeypatch)
+    job = {**BLOG_JOB, "url_source": "reddit", "url": "https://redd.it/1abc2de"}
+    resp = TestClient(main.app).post("/jobs", headers=HEADERS, json=job)
+
+    assert resp.status_code == 200
+    assert [s for s, _ in states] == ["summarizing"]
+    assert seen["episodes"] == []
 
 
 def test_text_note_goes_straight_to_the_graph(monkeypatch):
@@ -249,7 +281,7 @@ def test_summarize_runs_off_the_event_loop(monkeypatch):
         loop_thread["name"] = threading.current_thread().name
         return "<html>body</html>"
 
-    monkeypatch.setattr(main.fetcher, "render", record_render)
+    monkeypatch.setattr(main.sources.fetcher, "render", record_render)
 
     TestClient(main.app).post("/jobs", headers=HEADERS, json=BLOG_JOB)
 

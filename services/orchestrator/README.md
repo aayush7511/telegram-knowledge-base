@@ -12,20 +12,26 @@ still stubs. See [CLAUDE.md](../../CLAUDE.md) for the architecture and
 
 ## Module map
 
-- `main.py` — FastAPI app; `POST /jobs` branches blog URLs into `process_blog_job`
-  and text notes into `process_text_job`, both running **synchronously inside
-  the request** (see below).
-- `fetcher.py` — `render(url)`: headless Chromium → HTML.
+- `main.py` — FastAPI app; `POST /jobs` branches URL jobs whose source has a
+  fetcher into `process_url_job` and text notes into `process_text_job`, both
+  running **synchronously inside the request** (see below). Items under
+  `SUMMARY_MIN_CHARS` (1,500) skip the summary and reply; a link with nothing
+  to remember gets a "Skipped (not ingestible)" reply and ends `failed`.
+- `sources.py` — `FETCHERS`: one fetcher per `url_source` (url → `ResponseObject`,
+  or `NotSupported`). `blog` renders + extracts and rejects pages under
+  `MIN_ARTICLE_CHARS` (1,000) of text.
+- `fetcher.py` — `render(url)`: headless Chromium → HTML; `PageBlocked` on an HTTP error.
 - `extract.py` — `extract_content(html, url)` → `ResponseObject` (text + metadata cascade).
 - `articles.py` — `store_article(job_id, text)`: cleaned article text → R2
   `articles/{job_id}.txt` (S3 API via boto3). Best-effort; no-op until `R2_*` is set.
 - `summarize.py` — `Summarizer`: Gemini with a 5-RPM sliding-window limiter.
-- `telegram.py` — `send_summary(...)`: Bot API reply, threaded to the source message.
+- `telegram.py` — `send_summary(...)` / `send_text(...)`: Bot API replies, threaded to the source message.
 - `graph.py` — `write_episode(...)`: one Graphiti episode per job into FalkorDB
   (graph `second-brain`), `gpt-4.1-mini` at temperature 0 for extraction,
   `text-embedding-3-small` for embeddings. Built lazily on first use — the
-  FalkorDB driver connects in its constructor. `blog_episode(ro)` assembles the
-  episode: title + summary in the body, URL/site/author in `source_description`.
+  FalkorDB driver connects in its constructor. `url_episode(ro, source)` assembles
+  the episode: title + full text in the body, `<source>: <url>`/site/author in
+  `source_description`.
 - `test/` — pytest suite (offline; Playwright/Gemini/Telegram/Graphiti/R2 mocked).
 
 ## Why blog jobs are processed synchronously
@@ -103,7 +109,7 @@ curl -s -X POST localhost:8080/jobs -H "X-KB-Secret: devsecret" \
   -d '{"job_id":"b1","content_type":"url","url_source":"blog","url":"https://example.com/post","chat_id":123,"message_id":9}'
 ```
 
-Run tests: `pytest` (from this directory) — 21 tests. The suite is offline:
+Run tests: `pytest` (from this directory) — 24 tests. The suite is offline:
 Playwright, Gemini, Telegram, Graphiti, and R2 are mocked. Graph-related env
 vars for a real local run: `FALKORDB_HOST` (+ `FALKORDB_PORT`,
 `FALKORDB_PASSWORD`), `OPENAI_API_KEY`; article archive: `R2_ACCOUNT_ID`,
