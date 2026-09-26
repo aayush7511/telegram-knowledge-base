@@ -4,8 +4,10 @@ Network calls (captions, oEmbed, FxTwitter) are monkeypatched — offline.
 """
 import asyncio
 
+import functools
+
+import httpx
 import pytest
-import youtube_transcript_api as yta
 
 import sources
 
@@ -33,7 +35,7 @@ def test_youtube_video_id_rejects_garbage():
 
 
 def _wire_youtube(monkeypatch, transcript, oembed=None):
-    def fake_transcript(video_id):
+    async def fake_transcript(video_id):
         if isinstance(transcript, Exception):
             raise transcript
         return transcript
@@ -62,34 +64,87 @@ def test_fetch_youtube_without_metadata_still_works(monkeypatch):
     assert ro.text == "captions" and ro.title is None
 
 
-@pytest.mark.parametrize("transcript", ["", yta.TranscriptsDisabled("zjkBMFhNj_g")])
-def test_fetch_youtube_no_captions_is_not_supported(monkeypatch, transcript):
-    _wire_youtube(monkeypatch, transcript)
+def test_fetch_youtube_empty_captions_is_not_supported(monkeypatch):
+    _wire_youtube(monkeypatch, "  ")
     with pytest.raises(sources.NotSupported, match="no captions"):
         run(sources.fetch_youtube("https://youtu.be/zjkBMFhNj_g"))
 
 
-def test_fetch_youtube_unavailable_is_not_supported(monkeypatch):
-    _wire_youtube(monkeypatch, yta.VideoUnavailable("zjkBMFhNj_g"))
-    with pytest.raises(sources.NotSupported, match="unavailable"):
-        run(sources.fetch_youtube("https://youtu.be/zjkBMFhNj_g"))
+# Supadata, over a mock transport: status codes per its docs.
+
+def _supadata(monkeypatch, handler, key="test-key"):
+    if key:
+        monkeypatch.setenv("SUPADATA_API_KEY", key)
+    else:
+        monkeypatch.delenv("SUPADATA_API_KEY", raising=False)
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(sources.asyncio, "sleep", lambda seconds: real_sleep(0))
+    requests = []
+
+    def record(req):
+        requests.append(req)
+        return handler(req)
+
+    monkeypatch.setattr(sources.httpx, "AsyncClient",
+                        functools.partial(httpx.AsyncClient, transport=httpx.MockTransport(record)))
+    return requests
 
 
-def test_fetch_youtube_ip_block_is_an_ordinary_failure(monkeypatch):
-    """Blocks aren't "not supported" — the job just fails (retryable from D1)."""
-    _wire_youtube(monkeypatch, yta.RequestBlocked("zjkBMFhNj_g"))
-    with pytest.raises(yta.RequestBlocked):
-        run(sources.fetch_youtube("https://youtu.be/zjkBMFhNj_g"))
+def test_supadata_native_captions(monkeypatch):
+    reqs = _supadata(monkeypatch, lambda req: httpx.Response(200, json={"content": "hi everyone", "lang": "en"}))
+    assert run(sources._youtube_transcript("zjkBMFhNj_g")) == "hi everyone"
+    [req] = reqs
+    assert req.headers["x-api-key"] == "test-key"
+    # native only — auto/generate would bill 2 credits per minute of audio
+    assert req.url.params["mode"] == "native" and req.url.params["text"] == "true"
+    assert req.url.params["url"] == "https://www.youtube.com/watch?v=zjkBMFhNj_g"
 
 
-def test_fetch_youtube_times_out(monkeypatch):
-    import time
+def test_supadata_long_video_polls_the_job(monkeypatch):
+    replies = iter([
+        httpx.Response(202, json={"jobId": "job-1"}),
+        httpx.Response(200, json={"status": "active"}),
+        httpx.Response(200, json={"status": "completed", "content": [{"text": "part one"}, {"text": "part two"}]}),
+    ])
+    reqs = _supadata(monkeypatch, lambda req: next(replies))
+    assert run(sources._youtube_transcript("zjkBMFhNj_g")) == "part one part two"
+    assert [r.url.path for r in reqs] == ["/v1/transcript", "/v1/transcript/job-1", "/v1/transcript/job-1"]
 
-    _wire_youtube(monkeypatch, "never")
-    monkeypatch.setattr(sources, "_youtube_transcript", lambda vid: time.sleep(0.5) or "late")
-    monkeypatch.setattr(sources, "YOUTUBE_TIMEOUT_S", 0.05)
-    with pytest.raises(asyncio.TimeoutError):
-        run(sources.fetch_youtube("https://youtu.be/zjkBMFhNj_g"))
+
+@pytest.mark.parametrize("status, reason", [
+    (206, "no captions"),
+    (404, "unavailable, private, or age-restricted"),
+    (429, "quota is used up"),
+])
+def test_supadata_not_supported_cases(monkeypatch, status, reason):
+    _supadata(monkeypatch, lambda req: httpx.Response(status, json={"error": "x"}))
+    with pytest.raises(sources.NotSupported, match=reason):
+        run(sources._youtube_transcript("zjkBMFhNj_g"))
+
+
+def test_supadata_bad_key_is_an_ordinary_failure(monkeypatch):
+    _supadata(monkeypatch, lambda req: httpx.Response(401, json={"error": "unauthorized"}))
+    with pytest.raises(httpx.HTTPStatusError):
+        run(sources._youtube_transcript("zjkBMFhNj_g"))
+
+
+def test_supadata_failed_job_and_timeout(monkeypatch):
+    replies = iter([httpx.Response(202, json={"jobId": "j"}), httpx.Response(200, json={"status": "failed", "error": "boom"})])
+    _supadata(monkeypatch, lambda req: next(replies))
+    with pytest.raises(RuntimeError, match="boom"):
+        run(sources._youtube_transcript("zjkBMFhNj_g"))
+
+    monkeypatch.setattr(sources, "YOUTUBE_TIMEOUT_S", 9)  # 3 polls at SUPADATA_POLL_S=3
+    _supadata(monkeypatch, lambda req: httpx.Response(202, json={"jobId": "j"}) if req.url.path.endswith("transcript")
+              else httpx.Response(200, json={"status": "queued"}))
+    with pytest.raises(TimeoutError):
+        run(sources._youtube_transcript("zjkBMFhNj_g"))
+
+
+def test_youtube_without_a_supadata_key_is_not_supported(monkeypatch):
+    _supadata(monkeypatch, lambda req: httpx.Response(500), key=None)
+    with pytest.raises(sources.NotSupported, match="aren't set up yet"):
+        run(sources._youtube_transcript("zjkBMFhNj_g"))
 
 
 # --- X ---------------------------------------------------------------------
@@ -279,8 +334,6 @@ def test_fetch_stackexchange_deleted_question_is_not_supported(monkeypatch):
 
 # --- GitHub ----------------------------------------------------------------
 
-import httpx
-
 
 def _wire_github(monkeypatch, routes):
     """routes: api path → (status, body); body is text (raw) or a dict (json)."""
@@ -338,8 +391,6 @@ def test_fetch_github_gist_is_its_files(monkeypatch):
 
 
 # --- PDF -------------------------------------------------------------------
-
-import functools
 
 SENTENCE = "Attention is all you need for sequence transduction models. "
 

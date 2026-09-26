@@ -20,10 +20,11 @@ still stubs. See [CLAUDE.md](../../CLAUDE.md) for the architecture and
   to remember gets a "Skipped (not ingestible)" reply and ends `failed`.
 - `sources.py` — `FETCHERS`: one fetcher per `url_source` (url → `ResponseObject`,
   or `NotSupported`). `blog` renders + extracts and rejects pages under
-  `MIN_ARTICLE_CHARS` (1,000) of text; `youtube` is captions
-  (youtube-transcript-api, English preferred) + oEmbed title/channel, with a
-  240s timeout — Cloud Run's IPs get slow responses, not blocks
-  (spikes/youtube-transcript); `x` is FxTwitter's `/2/thread` — the author's
+  `MIN_ARTICLE_CHARS` (1,000) of text; `youtube` is the video's
+  existing captions via Supadata (`SUPADATA_API_KEY`; `mode=native` only — 1
+  credit per video, free plan 100/month; long videos are an async job polled
+  for up to 240s) + oEmbed title/channel — YouTube blocks Cloud Run's IPs and
+  free proxies, so we can't fetch captions ourselves (spikes/youtube-transcript); `x` is FxTwitter's `/2/thread` — the author's
   whole thread, X Articles flattened, quoted posts appended (spikes/x-fxtwitter);
   `stackexchange` is the official API — question + accepted (else top-voted)
   answer, or the linked answer; `github` is the REST API — a repo's README, an
@@ -124,8 +125,8 @@ curl -s -X POST localhost:8080/jobs -H "X-KB-Secret: devsecret" \
   -d '{"job_id":"b1","content_type":"url","url_source":"blog","url":"https://example.com/post","chat_id":123,"message_id":9}'
 ```
 
-Run tests: `pytest` (from this directory) — 85 tests. The suite is offline:
-Playwright, Gemini, Telegram, Graphiti, R2, YouTube, FxTwitter, Stack Exchange, and GitHub are mocked. Graph-related env
+Run tests: `pytest` (from this directory) — 89 tests. The suite is offline:
+Playwright, Gemini, Telegram, Graphiti, R2, Supadata, YouTube oEmbed, FxTwitter, Stack Exchange, and GitHub are mocked. Graph-related env
 vars for a real local run: `FALKORDB_HOST` (+ `FALKORDB_PORT`,
 `FALKORDB_PASSWORD`), `OPENAI_API_KEY`; article archive: `R2_ACCOUNT_ID`,
 `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` (+ `R2_BUCKET`, default

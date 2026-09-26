@@ -20,7 +20,6 @@ from urllib.parse import parse_qs, urljoin, urlparse
 import httpx
 import lxml.html
 import pypdf
-import youtube_transcript_api as yta
 
 import articles
 import extract
@@ -56,12 +55,17 @@ async def fetch_blog(url: str) -> ResponseObject:
     return ro
 
 
-# --- YouTube: captions (youtube-transcript-api) + title/channel (oEmbed) -----
-# Works from Cloud Run's IPs but slowly (4–154s per video in the spike vs ~1s
-# from home — spikes/youtube-transcript), so each fetch gets its own timeout
-# well inside the 600s request. A block or timeout is an ordinary `failed`.
+# --- YouTube: captions via Supadata + title/channel (oEmbed) ---------------
+# YouTube blocks Cloud Run's IPs and free datacenter proxies
+# (spikes/youtube-transcript), so captions come from Supadata, which fetches
+# them on its side. mode=native only: the video's existing captions, 1 credit
+# per video (free plan: 100/month, no card). Never auto/generate — those
+# transcribe the audio at 2 credits per *minute*, so one long video would drain
+# the month. Long videos come back as an async job, polled within the request.
 
+_SUPADATA = "https://api.supadata.ai/v1/"
 YOUTUBE_TIMEOUT_S = 240
+SUPADATA_POLL_S = 3
 NO_CAPTIONS = "the video has no captions — transcription comes in v4"
 _YT_ID = re.compile(r"^[\w-]{11}$")
 
@@ -81,20 +85,43 @@ def youtube_video_id(url: str) -> str:
     return vid
 
 
-def _youtube_transcript(video_id: str) -> str:
-    """Caption text, English preferred (manual before auto), else any language;
-    "" when the video has no captions at all.
+def _supadata_check(resp: httpx.Response) -> None:
+    if resp.status_code == 206:  # Supadata's "transcript-unavailable"
+        raise NotSupported(NO_CAPTIONS)
+    if resp.status_code == 404:
+        raise NotSupported("the video is unavailable, private, or age-restricted")
+    if resp.status_code == 429:
+        raise NotSupported("the YouTube transcript quota is used up for now — try again later")
+    resp.raise_for_status()  # 401/402/403 (key or plan) and 5xx are ordinary failures
 
-    Blocking (requests under the hood) — called via asyncio.to_thread.
-    """
-    transcripts = yta.YouTubeTranscriptApi().list(video_id)
-    try:
-        transcript = transcripts.find_transcript(["en", "en-US", "en-GB"])
-    except yta.NoTranscriptFound:
-        transcript = next(iter(transcripts), None)
-    if transcript is None:
-        return ""
-    return " ".join(s.text for s in transcript.fetch().snippets)
+
+def _supadata_text(data: dict) -> str:
+    content = data.get("content") or ""
+    return content if isinstance(content, str) else " ".join(c.get("text", "") for c in content)
+
+
+async def _youtube_transcript(video_id: str) -> str:
+    key = os.environ.get("SUPADATA_API_KEY")
+    if not key:
+        raise NotSupported("YouTube transcripts aren't set up yet")
+    async with httpx.AsyncClient(timeout=60, headers={"x-api-key": key}) as client:
+        resp = await client.get(_SUPADATA + "transcript", params={
+            "url": f"https://www.youtube.com/watch?v={video_id}", "text": "true", "mode": "native",
+        })
+        _supadata_check(resp)
+        if resp.status_code != 202:
+            return _supadata_text(resp.json())
+        job_id = resp.json()["jobId"]  # long video: poll the async job
+        for _ in range(YOUTUBE_TIMEOUT_S // SUPADATA_POLL_S):
+            await asyncio.sleep(SUPADATA_POLL_S)
+            resp = await client.get(_SUPADATA + f"transcript/{job_id}")
+            _supadata_check(resp)
+            job = resp.json()
+            if job.get("status") == "completed":
+                return _supadata_text(job)
+            if job.get("status") == "failed":
+                raise RuntimeError(f"Supadata transcript job failed: {job.get('error')}")
+    raise TimeoutError(f"Supadata transcript job {job_id} didn't finish in {YOUTUBE_TIMEOUT_S}s")
 
 
 async def _youtube_oembed(video_id: str) -> dict:
@@ -113,14 +140,7 @@ async def _youtube_oembed(video_id: str) -> dict:
 
 async def fetch_youtube(url: str) -> ResponseObject:
     video_id = youtube_video_id(url)
-    try:
-        text = await asyncio.wait_for(
-            asyncio.to_thread(_youtube_transcript, video_id), timeout=YOUTUBE_TIMEOUT_S
-        )
-    except yta.TranscriptsDisabled as exc:
-        raise NotSupported(NO_CAPTIONS) from exc
-    except (yta.VideoUnavailable, yta.VideoUnplayable, yta.AgeRestricted, yta.InvalidVideoId) as exc:
-        raise NotSupported("the video is unavailable, private, or age-restricted") from exc
+    text = await _youtube_transcript(video_id)
     if not text.strip():
         raise NotSupported(NO_CAPTIONS)
     meta = await _youtube_oembed(video_id)
