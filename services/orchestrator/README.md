@@ -24,7 +24,9 @@ still stubs. See [CLAUDE.md](../../CLAUDE.md) for the architecture and
   240s timeout — Cloud Run's IPs get slow responses, not blocks
   (spikes/youtube-transcript); `x` is FxTwitter's `/2/thread` — the author's
   whole thread, X Articles flattened, quoted posts appended (spikes/x-fxtwitter).
-- `fetcher.py` — `render(url)`: headless Chromium → HTML; `PageBlocked` on an HTTP error.
+- `fetcher.py` — `render(url)`: headless Chromium → HTML; `PageBlocked` on an HTTP error,
+  `PrivateAddress` if the page, a subresource, or a redirect hop reached a non-public address
+  (Cloud Run can reach the VPC — see the module docstring).
 - `extract.py` — `extract_content(html, url)` → `ResponseObject` (text + metadata cascade).
 - `articles.py` — `store_article(job_id, text)`: cleaned article text → R2
   `articles/{job_id}.txt` (S3 API via boto3). Best-effort; no-op until `R2_*` is set.
@@ -113,7 +115,7 @@ curl -s -X POST localhost:8080/jobs -H "X-KB-Secret: devsecret" \
   -d '{"job_id":"b1","content_type":"url","url_source":"blog","url":"https://example.com/post","chat_id":123,"message_id":9}'
 ```
 
-Run tests: `pytest` (from this directory) — 45 tests. The suite is offline:
+Run tests: `pytest` (from this directory) — 56 tests. The suite is offline:
 Playwright, Gemini, Telegram, Graphiti, R2, YouTube, and FxTwitter are mocked. Graph-related env
 vars for a real local run: `FALKORDB_HOST` (+ `FALKORDB_PORT`,
 `FALKORDB_PASSWORD`), `OPENAI_API_KEY`; article archive: `R2_ACCOUNT_ID`,

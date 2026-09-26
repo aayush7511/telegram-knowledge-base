@@ -160,3 +160,49 @@ def test_fetch_x_media_only_post_is_not_supported(monkeypatch):
     _wire_x(monkeypatch, {"status": post, "thread": [post]})
     with pytest.raises(sources.NotSupported, match="no text"):
         run(sources.fetch_x("https://x.com/a/status/1"))
+
+
+# --- Private addresses -----------------------------------------------------
+
+import socket
+
+import fetcher
+
+
+@pytest.mark.parametrize("addr, public", [
+    ("93.184.215.14", True),
+    ("2606:2800:21f:cb07:6820:80da:af6b:8b2c", True),
+    ("127.0.0.1", False),
+    ("10.128.0.2", False),       # the FalkorDB VM
+    ("169.254.169.254", False),  # GCP metadata
+    ("100.64.0.1", False),       # carrier-grade NAT
+    ("::1", False),
+    ("fe80::1%eth0", False),     # link-local with a zone id
+])
+def test_is_public_host(monkeypatch, addr, public):
+    monkeypatch.setattr(socket, "getaddrinfo", lambda host, port: [(None, None, None, "", (addr, 0))])
+    assert run(fetcher.is_public_host("some.host")) is public
+
+
+def test_is_public_host_rejects_if_any_address_is_private(monkeypatch):
+    monkeypatch.setattr(socket, "getaddrinfo", lambda host, port: [
+        (None, None, None, "", ("93.184.215.14", 0)), (None, None, None, "", ("10.0.0.5", 0)),
+    ])
+    assert run(fetcher.is_public_host("rebind.example")) is False
+
+
+def test_is_public_host_lets_unresolvable_hosts_fail_on_their_own(monkeypatch):
+    def nxdomain(host, port):
+        raise socket.gaierror("nodename nor servname provided")
+
+    monkeypatch.setattr(socket, "getaddrinfo", nxdomain)
+    assert run(fetcher.is_public_host("no-such-host.invalid")) is True
+
+
+def test_fetch_blog_private_address_is_not_supported(monkeypatch):
+    async def private(url, **kw):
+        raise fetcher.PrivateAddress("http://10.128.0.2:3000/")
+
+    monkeypatch.setattr(fetcher, "render", private)
+    with pytest.raises(sources.NotSupported, match="private network address"):
+        run(sources.fetch_blog("https://example.com/redirects-inward"))

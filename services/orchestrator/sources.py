@@ -37,6 +37,8 @@ async def fetch_blog(url: str) -> ResponseObject:
         html = await fetcher.render(url)
     except fetcher.PageBlocked as exc:
         raise NotSupported(f"the site returned HTTP {exc.status}") from exc
+    except fetcher.PrivateAddress as exc:
+        raise NotSupported("the link leads to a private network address") from exc
     ro = extract.extract_content(html, url)
     if len((ro.text or "").strip()) < MIN_ARTICLE_CHARS:
         raise NotSupported("no article text found")
