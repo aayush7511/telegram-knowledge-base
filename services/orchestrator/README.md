@@ -13,7 +13,8 @@ still stubs. See [CLAUDE.md](../../CLAUDE.md) for the architecture and
 ## Module map
 
 - `main.py` — FastAPI app; `POST /jobs` branches URL jobs whose source has a
-  fetcher into `process_url_job` and text notes into `process_text_job`, both
+  fetcher into `process_url_job`, PDF files into `process_pdf_file_job` (both
+  run the shared `process_source_job`), and text notes into `process_text_job`, all
   running **synchronously inside the request** (see below). Items under
   `SUMMARY_MIN_CHARS` (1,500) skip the summary and reply; a link with nothing
   to remember gets a "Skipped (not ingestible)" reply and ends `failed`.
@@ -28,7 +29,10 @@ still stubs. See [CLAUDE.md](../../CLAUDE.md) for the architecture and
   answer, or the linked answer; `github` is the REST API — a repo's README, an
   issue/PR's title + description, a gist's files. Optional keys raise their
   shared-IP quotas: `STACKEXCHANGE_KEY` (300 → 10,000/day), `GITHUB_TOKEN`
-  (60 → 5,000/hour).
+  (60 → 5,000/hour); `pdf` downloads (≤20MB, private addresses refused per
+  redirect hop) and extracts text with pypdf — scanned PDFs are "not supported".
+  A blog link that turns out to serve a file (arxiv.org/pdf/{id}) is handed to
+  `pdf`. `fetch_pdf_file(r2_key)` does the same for a PDF sent as a Telegram file.
 - `fetcher.py` — `render(url)`: headless Chromium → HTML; `PageBlocked` on an HTTP error,
   `PrivateAddress` if the page, a subresource, or a redirect hop reached a non-public address
   (Cloud Run can reach the VPC — see the module docstring).
@@ -120,7 +124,7 @@ curl -s -X POST localhost:8080/jobs -H "X-KB-Secret: devsecret" \
   -d '{"job_id":"b1","content_type":"url","url_source":"blog","url":"https://example.com/post","chat_id":123,"message_id":9}'
 ```
 
-Run tests: `pytest` (from this directory) — 73 tests. The suite is offline:
+Run tests: `pytest` (from this directory) — 85 tests. The suite is offline:
 Playwright, Gemini, Telegram, Graphiti, R2, YouTube, FxTwitter, Stack Exchange, and GitHub are mocked. Graph-related env
 vars for a real local run: `FALKORDB_HOST` (+ `FALKORDB_PORT`,
 `FALKORDB_PASSWORD`), `OPENAI_API_KEY`; article archive: `R2_ACCOUNT_ID`,

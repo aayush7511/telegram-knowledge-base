@@ -45,6 +45,10 @@ class PrivateAddress(Exception):
     """The page, a redirect, or a subresource pointed at a non-public address."""
 
 
+class IsDownload(Exception):
+    """The link serves a file (e.g. a PDF without a .pdf path), not a page."""
+
+
 async def is_public_host(host: str | None) -> bool:
     """False if `host` resolves to any non-global address (private, loopback,
     link-local, metadata, reserved). An unresolvable host counts as public —
@@ -88,9 +92,11 @@ async def render(url: str, *, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> str:
             except PlaywrightTimeout:
                 # Never settled — take what's rendered so far rather than fail.
                 await page.wait_for_load_state("domcontentloaded")
-            except PlaywrightError:
+            except PlaywrightError as exc:
                 if not await public(urlparse(url).hostname):
                     raise PrivateAddress(url) from None
+                if "Download is starting" in str(exc):  # Playwright's error for a file response
+                    raise IsDownload(url) from None
                 raise
             for seen in requested:
                 target = urlparse(seen)

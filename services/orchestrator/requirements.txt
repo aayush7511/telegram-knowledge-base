@@ -13,3 +13,5 @@ graphiti-core[falkordb]==0.30.2
 boto3
 # v3: YouTube captions. Pinned — it scrapes YouTube's internal API, which shifts.
 youtube-transcript-api==1.2.4
+# v3: PDF text (links + Telegram files). BSD; pure Python.
+pypdf==6.19.0

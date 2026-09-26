@@ -11,15 +11,18 @@ from __future__ import annotations
 
 import asyncio
 import html
+import io
 import os
 import re
 from typing import Awaitable, Callable
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 import httpx
 import lxml.html
+import pypdf
 import youtube_transcript_api as yta
 
+import articles
 import extract
 import fetcher
 from extract import ResponseObject
@@ -34,6 +37,9 @@ class NotSupported(Exception):
     """The link has nothing to remember — reply and fail the job, don't save."""
 
 
+PRIVATE = "the link leads to a private network address"
+
+
 async def fetch_blog(url: str) -> ResponseObject:
     """Render with Playwright, extract with Trafilatura + extruct."""
     try:
@@ -41,7 +47,9 @@ async def fetch_blog(url: str) -> ResponseObject:
     except fetcher.PageBlocked as exc:
         raise NotSupported(f"the site returned HTTP {exc.status}") from exc
     except fetcher.PrivateAddress as exc:
-        raise NotSupported("the link leads to a private network address") from exc
+        raise NotSupported(PRIVATE) from exc
+    except fetcher.IsDownload:
+        return await fetch_pdf(url)  # a file, e.g. arxiv.org/pdf/{id} — fetch_pdf checks it's a PDF
     ro = extract.extract_content(html, url)
     if len((ro.text or "").strip()) < MIN_ARTICLE_CHARS:
         raise NotSupported("no article text found")
@@ -322,10 +330,73 @@ async def fetch_github(url: str) -> ResponseObject:
     return ResponseObject(url=url, title=f"{owner}/{repo}", author=owner, sitename="GitHub", text=resp.text)
 
 
+# --- PDF: links and Telegram files (pypdf) ---------------------------------
+# Text PDFs only — a scanned PDF has no text layer and needs OCR. Links are
+# downloaded with the same private-address rule as rendered pages, checked per
+# redirect hop (httpx doesn't follow them here), and capped at Telegram's 20MB.
+
+PDF_MAX_BYTES = 20 * 1024 * 1024
+MIN_PDF_CHARS = 200
+_BROWSER_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36"
+
+
+def pdf_to_response(data: bytes, url: str, sitename: str | None) -> ResponseObject:
+    """Text + title/author from PDF bytes. CPU-bound — call via asyncio.to_thread."""
+    if not data.startswith(b"%PDF-"):
+        raise NotSupported("it's a file download, not a page or a PDF")
+    try:
+        reader = pypdf.PdfReader(io.BytesIO(data))
+        if reader.is_encrypted and not reader.decrypt(""):
+            raise NotSupported("the PDF is password-protected")
+        text = "\n\n".join((page.extract_text() or "").strip() for page in reader.pages).strip()
+        meta = reader.metadata
+    except pypdf.errors.PyPdfError as exc:
+        raise NotSupported("the PDF is damaged or unreadable") from exc
+    if len(text) < MIN_PDF_CHARS:
+        raise NotSupported("the PDF has no text layer (scanned?) — OCR isn't supported")
+    return ResponseObject(
+        url=url, title=(meta.title if meta else None) or None, author=(meta.author if meta else None) or None,
+        sitename=sitename, text=text,
+    )
+
+
+async def _download_pdf(url: str) -> bytes:
+    async with httpx.AsyncClient(timeout=60, follow_redirects=False, headers={"User-Agent": _BROWSER_UA}) as client:
+        for _ in range(6):
+            if not await fetcher.is_public_host(urlparse(url).hostname):
+                raise NotSupported(PRIVATE)
+            async with client.stream("GET", url) as resp:
+                if resp.is_redirect:
+                    url = urljoin(url, resp.headers["location"])
+                    continue
+                if resp.status_code >= 400:
+                    raise NotSupported(f"the site returned HTTP {resp.status_code}")
+                chunks, size = [], 0
+                async for chunk in resp.aiter_bytes():
+                    size += len(chunk)
+                    if size > PDF_MAX_BYTES:
+                        raise NotSupported("the PDF is over 20MB")
+                    chunks.append(chunk)
+                return b"".join(chunks)
+    raise NotSupported("too many redirects")
+
+
+async def fetch_pdf(url: str) -> ResponseObject:
+    data = await _download_pdf(url)
+    return await asyncio.to_thread(pdf_to_response, data, url, urlparse(url).hostname)
+
+
+async def fetch_pdf_file(r2_key: str) -> ResponseObject:
+    """A PDF sent as a Telegram file — Worker 1 already stored it in R2."""
+    data = await asyncio.to_thread(articles.read_object, r2_key)
+    return await asyncio.to_thread(pdf_to_response, data, "Telegram file", "Telegram")
+
+
 FETCHERS: dict[str, Callable[[str], Awaitable[ResponseObject]]] = {
     "blog": fetch_blog,
     "youtube": fetch_youtube,
     "x": fetch_x,
     "stackexchange": fetch_stackexchange,
     "github": fetch_github,
+    "pdf": fetch_pdf,
 }

@@ -36,6 +36,9 @@ log = logging.getLogger("kb-orchestrator")
 # token in the URL path — that would write the token into Cloud Run logs on every
 # reply. Warnings and errors still come through.
 logging.getLogger("httpx").setLevel(logging.WARNING)
+# pypdf warns once per font it can't fully decode (dozens per arXiv paper)
+# without changing the extracted text — measured identical with fontTools.
+logging.getLogger("pypdf").setLevel(logging.ERROR)
 
 app = FastAPI()
 
@@ -86,8 +89,9 @@ async def post_status(
 SUMMARY_MIN_CHARS = 1_500
 
 
-async def reply_not_supported(job: dict, reason: str) -> None:
-    """Tell the user a link was skipped, in the same shape as Worker 1's reply.
+async def reply_not_supported(job: dict, target: str, reason: str) -> None:
+    """Tell the user an item (a link, or "your PDF") was skipped, in the same
+    shape as Worker 1's reply.
 
     Best-effort like status posts: the job's `failed` state is the record.
     """
@@ -96,7 +100,7 @@ async def reply_not_supported(job: dict, reason: str) -> None:
     if not token or chat_id is None:
         log.info("not-supported reply skipped (token/chat_id missing): job_id=%s", job.get("job_id"))
         return
-    text = f"Skipped (not ingestible):\n• {job.get('url')} — {reason}"
+    text = f"Skipped (not ingestible):\n• {target} — {reason}"
     try:
         await telegram.send_text(chat_id, job.get("message_id"), text, token=token)
     except httpx.HTTPError as exc:
@@ -104,11 +108,35 @@ async def reply_not_supported(job: dict, reason: str) -> None:
 
 
 async def process_url_job(job: dict) -> None:
-    """URL pipeline: fetching → [summarizing → reply] → indexing → saved (or failed).
+    """A link: the fetcher comes from sources.FETCHERS by `url_source`."""
+    url, source = job.get("url"), job["url_source"]
 
-    The fetcher comes from sources.FETCHERS by `url_source`; everything after
-    fetching is shared. Items shorter than SUMMARY_MIN_CHARS skip summarizing
-    and the reply.
+    async def fetch():
+        if not url:
+            raise ValueError("url job missing url")
+        return await sources.FETCHERS[source](url)
+
+    await process_source_job(job, source, fetch, target=url or "")
+
+
+async def process_pdf_file_job(job: dict) -> None:
+    """A PDF sent as a Telegram file: Worker 1 already stored it in R2."""
+    r2_key = (job.get("media") or {}).get("r2_key")
+
+    async def fetch():
+        if not r2_key:
+            raise ValueError("document job missing media.r2_key")
+        return await sources.fetch_pdf_file(r2_key)
+
+    await process_source_job(job, "pdf", fetch, target="your PDF")
+
+
+async def process_source_job(job: dict, source: str, fetch, *, target: str) -> None:
+    """Shared pipeline: fetching → [summarizing → reply] → indexing → saved (or failed).
+
+    `fetch()` returns the item's ResponseObject; everything after it is shared.
+    Items shorter than SUMMARY_MIN_CHARS skip summarizing and the reply.
+    `target` names the item in replies and is the episode name without a title.
 
     Runs inline in the request. Never raises: a failure is recorded as terminal
     `failed` in D1 and swallowed, so Worker 2 still gets a 2xx and acks the
@@ -118,14 +146,9 @@ async def process_url_job(job: dict) -> None:
     archived, summarized, or graphed.
     """
     job_id = job["job_id"]
-    url = job.get("url")
-    source = job["url_source"]
     try:
-        if not url:
-            raise ValueError("url job missing url")
-
         await post_status(job_id, "fetching")
-        ro = await sources.FETCHERS[source](url)
+        ro = await fetch()
         await articles.store_article(job_id, ro.text)
 
         if len(ro.text) >= SUMMARY_MIN_CHARS:
@@ -159,7 +182,7 @@ async def process_url_job(job: dict) -> None:
         await post_status(job_id, "indexing", summary=body)
         await graph.write_episode(
             job_id,
-            name=ro.title or url,
+            name=ro.title or target,
             body=body,
             source_description=source_description,
             reference_time=graph.parse_time_received(job.get("time_received")),
@@ -167,11 +190,11 @@ async def process_url_job(job: dict) -> None:
 
         await post_status(job_id, "saved")
     except sources.NotSupported as exc:
-        log.info("url job not supported: job_id=%s: %s", job_id, exc)
-        await reply_not_supported(job, str(exc))
+        log.info("job not supported: job_id=%s: %s", job_id, exc)
+        await reply_not_supported(job, target, str(exc))
         await post_status(job_id, "failed", error=f"not supported: {exc}")
     except Exception as exc:
-        log.exception("url job failed: job_id=%s", job_id)
+        log.exception("job failed: job_id=%s", job_id)
         await post_status(job_id, "failed", error=str(exc))
 
 
@@ -231,7 +254,13 @@ async def receive_job(request: Request):
         # awaits API approval, Instagram is v4): say so instead of leaving the
         # message at 👀.
         reason = f"{job.get('url_source')} links aren't supported yet"
-        await reply_not_supported(job, reason)
+        await reply_not_supported(job, job.get("url") or "", reason)
+        await post_status(job_id, "failed", error=f"not supported: {reason}")
+    elif content_type == "document" and (job.get("media") or {}).get("mime_type") == "application/pdf":
+        await process_pdf_file_job(job)
+    elif content_type == "document":
+        reason = "only PDF files are supported"
+        await reply_not_supported(job, "your file", reason)
         await post_status(job_id, "failed", error=f"not supported: {reason}")
     else:
         # Other job types not built yet — placeholder status so the round trip

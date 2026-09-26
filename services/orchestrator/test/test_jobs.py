@@ -217,6 +217,59 @@ def test_url_source_without_a_fetcher_is_not_supported_yet(monkeypatch):
     assert seen["episodes"] == []
 
 
+PDF_FILE_JOB = {
+    "job_id": "j4",
+    "content_type": "document",
+    "media": {"r2_key": "raw-media/j4.pdf", "mime_type": "application/pdf"},
+    "chat_id": 42,
+    "message_id": 9,
+    "time_received": "2026-09-16T10:00:00.000Z",
+}
+
+
+def test_pdf_file_runs_the_shared_pipeline(monkeypatch):
+    states, sent, seen = _wire(monkeypatch)
+    keys = []
+
+    async def fake_pdf_file(r2_key):
+        keys.append(r2_key)
+        return ResponseObject(url="Telegram file", title=None, sitename="Telegram", text=ARTICLE)
+
+    monkeypatch.setattr(main.sources, "fetch_pdf_file", fake_pdf_file)
+    resp = TestClient(main.app).post("/jobs", headers=HEADERS, json=PDF_FILE_JOB)
+
+    assert resp.status_code == 200
+    assert keys == ["raw-media/j4.pdf"]
+    assert [s for s, _ in states] == ["fetching", "summarizing", "indexing", "saved"]
+    assert sent["ro"].summary == "SUMMARY"
+    [ep] = seen["episodes"]
+    assert ep["name"] == "your PDF"  # no title → the reply target
+    assert ep["source_description"] == "pdf: Telegram file | site: Telegram"
+
+
+def test_scanned_pdf_file_is_not_supported(monkeypatch):
+    states, sent, seen = _wire(monkeypatch)
+
+    async def scanned(r2_key):
+        raise main.sources.NotSupported("the PDF has no text layer (scanned?) — OCR isn't supported")
+
+    monkeypatch.setattr(main.sources, "fetch_pdf_file", scanned)
+    TestClient(main.app).post("/jobs", headers=HEADERS, json=PDF_FILE_JOB)
+
+    assert [s for s, _ in states] == ["fetching", "failed"]
+    [reply] = seen["texts"]
+    assert reply["text"].startswith("Skipped (not ingestible):\n• your PDF — the PDF has no text layer")
+
+
+def test_other_documents_are_not_supported(monkeypatch):
+    states, sent, seen = _wire(monkeypatch)
+    job = {**PDF_FILE_JOB, "media": {"r2_key": "raw-media/j4.docx", "mime_type": "application/msword"}}
+    TestClient(main.app).post("/jobs", headers=HEADERS, json=job)
+
+    assert states == [("failed", "not supported: only PDF files are supported")]
+    assert seen["texts"][0]["text"] == "Skipped (not ingestible):\n• your file — only PDF files are supported"
+
+
 def test_text_note_goes_straight_to_the_graph(monkeypatch):
     states, sent, seen = _wire(monkeypatch)
     client = TestClient(main.app)

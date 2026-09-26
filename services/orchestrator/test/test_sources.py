@@ -335,3 +335,101 @@ def test_fetch_github_gist_is_its_files(monkeypatch):
     ro = run(sources.fetch_github("https://gist.github.com/karpathy/abc123"))
     assert ro.title == "Notes" and ro.author == "karpathy"
     assert ro.text == "a.md:\n\nAlpha\n\nb.py:\n\nprint(1)"
+
+
+# --- PDF -------------------------------------------------------------------
+
+import functools
+
+SENTENCE = "Attention is all you need for sequence transduction models. "
+
+
+def make_pdf(text: str | None) -> bytes:
+    """A one-page PDF; `text=None` makes a page with no text layer (like a scan)."""
+    content = f"BT /F1 10 Tf 20 700 Td ({text}) Tj ET".encode() if text else b""
+    objs = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+        b"<< /Length %d >>\nstream\n" % len(content) + content + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    out, offsets = bytearray(b"%PDF-1.4\n"), []
+    for i, obj in enumerate(objs, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % i + obj + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)
+    for off in offsets:
+        out += b"%010d 00000 n \n" % off
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, xref)
+    return bytes(out)
+
+
+def test_pdf_to_response_extracts_text():
+    ro = sources.pdf_to_response(make_pdf(SENTENCE * 5), "https://arxiv.org/pdf/1706.03762", "arxiv.org")
+    assert "Attention is all you need" in ro.text and len(ro.text) >= sources.MIN_PDF_CHARS
+    assert ro.url == "https://arxiv.org/pdf/1706.03762" and ro.sitename == "arxiv.org"
+
+
+@pytest.mark.parametrize("data, reason", [
+    (make_pdf(None), "no text layer"),
+    (make_pdf("too short"), "no text layer"),
+    (b"<html>not a pdf</html>", "not a page or a PDF"),
+    (b"%PDF-1.4\ngarbage that is not a pdf", "damaged or unreadable"),
+])
+def test_pdf_to_response_not_supported(data, reason):
+    with pytest.raises(sources.NotSupported, match=reason):
+        sources.pdf_to_response(data, "u", None)
+
+
+def _mock_http(monkeypatch, handler):
+    monkeypatch.setattr(sources.httpx, "AsyncClient",
+                        functools.partial(httpx.AsyncClient, transport=httpx.MockTransport(handler)))
+
+
+def test_download_pdf_follows_public_redirects(monkeypatch):
+    async def public(host):
+        return True
+
+    monkeypatch.setattr(fetcher, "is_public_host", public)
+    pdf = make_pdf(SENTENCE * 5)
+    _mock_http(monkeypatch, lambda req: (
+        httpx.Response(302, headers={"location": "/files/paper.pdf"}) if req.url.path == "/pdf/1"
+        else httpx.Response(200, content=pdf)))
+    assert run(sources._download_pdf("https://example.org/pdf/1")) == pdf
+
+
+def test_download_pdf_refuses_a_redirect_to_a_private_address(monkeypatch):
+    async def public(host):
+        return host != "internal.example"
+
+    monkeypatch.setattr(fetcher, "is_public_host", public)
+    _mock_http(monkeypatch, lambda req: httpx.Response(302, headers={"location": "http://internal.example/x.pdf"}))
+    with pytest.raises(sources.NotSupported, match="private network address"):
+        run(sources._download_pdf("https://example.org/paper.pdf"))
+
+
+def test_download_pdf_caps_size(monkeypatch):
+    async def public(host):
+        return True
+
+    monkeypatch.setattr(fetcher, "is_public_host", public)
+    monkeypatch.setattr(sources, "PDF_MAX_BYTES", 1000)
+    _mock_http(monkeypatch, lambda req: httpx.Response(200, content=b"%PDF-" + b"x" * 2000))
+    with pytest.raises(sources.NotSupported, match="over 20MB"):
+        run(sources._download_pdf("https://example.org/big.pdf"))
+
+
+def test_fetch_blog_hands_a_file_download_to_the_pdf_fetcher(monkeypatch):
+    async def download(url, **kw):
+        raise fetcher.IsDownload(url)
+
+    async def fake_fetch_pdf(url):
+        return sources.ResponseObject(url=url, text="pdf text")
+
+    monkeypatch.setattr(fetcher, "render", download)
+    monkeypatch.setattr(sources, "fetch_pdf", fake_fetch_pdf)
+    ro = run(sources.fetch_blog("https://arxiv.org/pdf/1706.03762"))
+    assert ro.text == "pdf text"
