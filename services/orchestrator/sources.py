@@ -267,9 +267,65 @@ async def fetch_stackexchange(url: str) -> ResponseObject:
     )
 
 
+# --- GitHub: REST API -------------------------------------------------------
+# A repo is its README; an issue or PR its title + description (no comments);
+# a gist its files. Discussions have no REST endpoint (GraphQL needs a token)
+# and render with every comment, so Worker 1 rejects them. GITHUB_TOKEN is optional: without it
+# the limit is 60 requests/hour per IP, and Cloud Run's egress IPs are shared.
+
+_GITHUB_API = "https://api.github.com/"
+
+
+async def _github_get(path: str, *, raw: bool = False) -> httpx.Response:
+    headers = {
+        "Accept": "application/vnd.github.raw+json" if raw else "application/vnd.github+json",
+        "User-Agent": "kb-orchestrator",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    if token := os.environ.get("GITHUB_TOKEN"):
+        headers["Authorization"] = f"Bearer {token}"
+    async with httpx.AsyncClient(timeout=20, headers=headers) as client:
+        resp = await client.get(_GITHUB_API + path)
+    if resp.status_code != 404:
+        resp.raise_for_status()
+    return resp
+
+
+async def fetch_github(url: str) -> ResponseObject:
+    u = urlparse(url)
+    segs = [s for s in u.path.split("/") if s]
+    if u.hostname == "gist.github.com":
+        resp = await _github_get(f"gists/{segs[1]}")
+        if resp.status_code == 404:
+            raise NotSupported("the gist doesn't exist or is secret")
+        gist = resp.json()
+        files = [f for f in (gist.get("files") or {}).values() if f.get("content")]
+        return ResponseObject(
+            url=url, title=gist.get("description") or (files[0]["filename"] if files else None),
+            author=(gist.get("owner") or {}).get("login"), sitename="GitHub",
+            text="\n\n".join(f"{f['filename']}:\n\n{f['content']}" for f in files),
+        )
+    owner, repo = segs[0], segs[1].removesuffix(".git")
+    if len(segs) >= 4:  # issues/{n} or pull/{n} — PRs are issues in the REST API
+        resp = await _github_get(f"repos/{owner}/{repo}/issues/{segs[3]}")
+        if resp.status_code == 404:
+            raise NotSupported("the issue or PR doesn't exist or is private")
+        issue = resp.json()
+        return ResponseObject(
+            url=url, title=issue.get("title"), author=(issue.get("user") or {}).get("login"),
+            sitename=f"GitHub · {owner}/{repo}", text=(issue.get("body") or "").strip(),
+        )
+    resp = await _github_get(f"repos/{owner}/{repo}/readme", raw=True)
+    if resp.status_code == 404:
+        exists = (await _github_get(f"repos/{owner}/{repo}")).status_code != 404
+        raise NotSupported("the repo has no README" if exists else "the repo doesn't exist or is private")
+    return ResponseObject(url=url, title=f"{owner}/{repo}", author=owner, sitename="GitHub", text=resp.text)
+
+
 FETCHERS: dict[str, Callable[[str], Awaitable[ResponseObject]]] = {
     "blog": fetch_blog,
     "youtube": fetch_youtube,
     "x": fetch_x,
     "stackexchange": fetch_stackexchange,
+    "github": fetch_github,
 }

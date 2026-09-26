@@ -20,6 +20,12 @@ def test_url_episode_omits_missing_metadata():
     assert source == "blog: https://x.test/p"
 
 
+def test_url_episode_with_a_title_but_no_text():
+    ro = ResponseObject(url="https://github.com/o/r/issues/1", title="Just a title", text="")
+    body, _ = graph.url_episode(ro, "github")
+    assert body == "Just a title"
+
+
 def test_url_episode_labels_provenance_with_the_source():
     ro = ResponseObject(url="https://x.com/a/status/1", author="a", text="A post.")
     _, source = graph.url_episode(ro, "x")

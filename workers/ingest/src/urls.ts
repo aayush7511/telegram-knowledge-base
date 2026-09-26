@@ -179,13 +179,15 @@ const GITHUB_RESERVED = new Set([
   "orgs", "sponsors", "features", "pricing", "about", "new", "collections", "events",
   "codespaces", "pulls", "issues", "apps", "enterprise", "login", "signup", "dashboard",
 ]);
-const GITHUB_ITEM_KINDS = new Set(["issues", "pull", "discussions"]);
+const GITHUB_ITEM_KINDS = new Set(["issues", "pull"]);
 
 function checkGitHub(raw: string, segs: string[]): CheckedUrl {
   const s = segs.map((x) => x.toLowerCase());
   const reject: CheckedUrl = { ok: false, url: raw, reason: "GitHub profile/listing, not a repo, issue, or PR" };
   if (s.length < 2 || GITHUB_RESERVED.has(s[0])) return reject;
   if (s.length === 2) return { ok: true, url: raw, source: "github" }; // repo root → its README
+  // No REST endpoint, and the rendered page carries every comment.
+  if (s[2] === "discussions") return { ok: false, url: raw, reason: "GitHub discussions aren't supported yet" };
   if (GITHUB_ITEM_KINDS.has(s[2]) && NUMERIC.test(s[3] ?? "")) return { ok: true, url: raw, source: "github" };
   return reject;
 }

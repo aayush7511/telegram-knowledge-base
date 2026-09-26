@@ -82,7 +82,7 @@ def url_episode(ro: ResponseObject, source: str) -> tuple[str, str]:
     the body turned `anthropic.com` and `paulgraham.com` into entities and
     crowded out the real content.
     """
-    body = f"{ro.title}\n\n{ro.text}" if ro.title else ro.text
+    body = "\n\n".join(part for part in (ro.title, ro.text) if part)
     meta = [f"{source}: {ro.url}"] + [f"{k}: {v}" for k, v in (("site", ro.sitename), ("author", ro.author)) if v]
     return body, " | ".join(meta)
 

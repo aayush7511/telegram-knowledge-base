@@ -275,3 +275,63 @@ def test_fetch_stackexchange_deleted_question_is_not_supported(monkeypatch):
     _wire_se(monkeypatch, {})
     with pytest.raises(sources.NotSupported, match="doesn't exist"):
         run(sources.fetch_stackexchange("https://stackoverflow.com/q/1"))
+
+
+# --- GitHub ----------------------------------------------------------------
+
+import httpx
+
+
+def _wire_github(monkeypatch, routes):
+    """routes: api path → (status, body); body is text (raw) or a dict (json)."""
+    calls = []
+
+    async def fake_get(path, *, raw=False):
+        calls.append(path)
+        status, body = routes.get(path, (404, {"message": "Not Found"}))
+        kw = {"text": body} if isinstance(body, str) else {"json": body}
+        return httpx.Response(status, **kw)
+
+    monkeypatch.setattr(sources, "_github_get", fake_get)
+    return calls
+
+
+def test_fetch_github_repo_is_its_readme(monkeypatch):
+    _wire_github(monkeypatch, {"repos/getzep/graphiti/readme": (200, "# Graphiti\n\nTemporal knowledge graphs.")})
+    ro = run(sources.fetch_github("https://github.com/getzep/graphiti.git"))
+    assert ro.title == "getzep/graphiti" and ro.author == "getzep" and ro.sitename == "GitHub"
+    assert ro.text == "# Graphiti\n\nTemporal knowledge graphs."
+
+
+def test_fetch_github_repo_without_readme_vs_missing_repo(monkeypatch):
+    _wire_github(monkeypatch, {"repos/a/has-no-readme": (200, {"full_name": "a/has-no-readme"})})
+    with pytest.raises(sources.NotSupported, match="no README"):
+        run(sources.fetch_github("https://github.com/a/has-no-readme"))
+    with pytest.raises(sources.NotSupported, match="doesn't exist or is private"):
+        run(sources.fetch_github("https://github.com/a/missing"))
+
+
+@pytest.mark.parametrize("kind", ["issues", "pull"])
+def test_fetch_github_issue_or_pr_is_title_and_description(monkeypatch, kind):
+    calls = _wire_github(monkeypatch, {"repos/getzep/graphiti/issues/12": (
+        200, {"title": "Support FalkorDB", "body": "  Add a FalkorDB driver.  ", "user": {"login": "someone"}})})
+    ro = run(sources.fetch_github(f"https://github.com/getzep/graphiti/{kind}/12"))
+    assert (ro.title, ro.text, ro.author) == ("Support FalkorDB", "Add a FalkorDB driver.", "someone")
+    assert ro.sitename == "GitHub · getzep/graphiti"
+    assert calls == ["repos/getzep/graphiti/issues/12"]  # no comments fetched
+
+
+def test_fetch_github_issue_without_description(monkeypatch):
+    _wire_github(monkeypatch, {"repos/o/r/issues/1": (200, {"title": "Just a title", "body": None, "user": {}})})
+    ro = run(sources.fetch_github("https://github.com/o/r/issues/1"))
+    assert ro.title == "Just a title" and ro.text == ""
+
+
+def test_fetch_github_gist_is_its_files(monkeypatch):
+    _wire_github(monkeypatch, {"gists/abc123": (200, {
+        "description": "Notes", "owner": {"login": "karpathy"},
+        "files": {"a.md": {"filename": "a.md", "content": "Alpha"}, "b.py": {"filename": "b.py", "content": "print(1)"}},
+    })})
+    ro = run(sources.fetch_github("https://gist.github.com/karpathy/abc123"))
+    assert ro.title == "Notes" and ro.author == "karpathy"
+    assert ro.text == "a.md:\n\nAlpha\n\nb.py:\n\nprint(1)"

@@ -197,13 +197,16 @@ describe("checkUrl — stack exchange", () => {
 describe("checkUrl — github", () => {
   const LISTING = "GitHub profile/listing, not a repo, issue, or PR";
 
-  it("accepts repos, issues, PRs, discussions, and gists", () => {
+  it("accepts repos, issues, PRs, and gists", () => {
     accepts("https://github.com/getzep/graphiti", "github");
     accepts("https://github.com/getzep/graphiti/", "github");
     accepts("https://github.com/getzep/graphiti/issues/123", "github");
     accepts("https://github.com/getzep/graphiti/pull/456", "github");
-    accepts("https://github.com/getzep/graphiti/discussions/78", "github");
     accepts("https://gist.github.com/karpathy/abc123", "github");
+  });
+
+  it("rejects discussions for now", () => {
+    rejects("https://github.com/getzep/graphiti/discussions/78", "GitHub discussions aren't supported yet");
   });
 
   it("accepts a repo whose name looks like a site page", () => {
