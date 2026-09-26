@@ -205,13 +205,15 @@ def test_short_item_skips_summary_and_reply(monkeypatch):
     assert seen["archived"] == {"j1": "A short post."}
 
 
-def test_url_source_without_a_fetcher_uses_stub(monkeypatch):
+def test_url_source_without_a_fetcher_is_not_supported_yet(monkeypatch):
     states, sent, seen = _wire(monkeypatch)
     job = {**BLOG_JOB, "url_source": "reddit", "url": "https://redd.it/1abc2de"}
     resp = TestClient(main.app).post("/jobs", headers=HEADERS, json=job)
 
     assert resp.status_code == 200
-    assert [s for s, _ in states] == ["summarizing"]
+    assert states == [("failed", "not supported: reddit links aren't supported yet")]
+    [reply] = seen["texts"]
+    assert reply["text"] == "Skipped (not ingestible):\n• https://redd.it/1abc2de — reddit links aren't supported yet"
     assert seen["episodes"] == []
 
 

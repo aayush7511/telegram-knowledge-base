@@ -226,6 +226,13 @@ async def receive_job(request: Request):
         await process_url_job(job)
     elif content_type == "text":
         await process_text_job(job)
+    elif content_type == "url":
+        # A source Worker 1 recognizes but no fetcher exists for yet (Reddit
+        # awaits API approval, Instagram is v4): say so instead of leaving the
+        # message at 👀.
+        reason = f"{job.get('url_source')} links aren't supported yet"
+        await reply_not_supported(job, reason)
+        await post_status(job_id, "failed", error=f"not supported: {reason}")
     else:
         # Other job types not built yet — placeholder status so the round trip
         # stays testable end to end.
