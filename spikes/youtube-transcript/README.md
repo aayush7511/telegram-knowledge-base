@@ -56,3 +56,23 @@ proxy. Give each fetch its own timeout well inside the 600s request, and
 treat `RequestBlocked` / `IpBlocked` / timeout as a normal `failed` job. If
 blocks show up in production, the fallbacks in order: Webshare's free
 static proxies, then the home Pi.
+
+## Results, part 2 (2026-09-26, production + Webshare free proxies)
+
+**Production Cloud Run is blocked.** The first real YouTube job after deploy
+failed in 18s with `RequestBlocked` — Cloud Run's egress IPs are on YouTube's
+blocklist even though Cloud Shell's weren't. Cloud Shell was the wrong proxy
+for Cloud Run.
+
+**Webshare's free proxies are blocked too.** All 10 free static datacenter
+proxies (US, GB, ES, PL, JP, DE; all "valid" per Webshare's API), run from a
+home Mac so only the proxy IP differed: 8 → `RequestBlocked`, 2 → `IpBlocked`,
+on all three videos. The library README's warning holds: only rotating
+*residential* proxies work, and those are paid.
+
+The spike can now read proxies and their credentials from Webshare's API
+(`WEBSHARE_API_KEY`) instead of hand-typed values — hand-typed credentials were
+the cause of an earlier all-`ProxyError` run.
+
+**Conclusion:** YouTube captions need a residential IP (the home Pi) or a
+route that doesn't fetch from our IP at all.
