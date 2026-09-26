@@ -11,6 +11,8 @@ import main
 from extract import ResponseObject
 
 HEADERS = {"X-KB-Secret": "s"}
+# Long enough to pass the article-text minimum (main.MIN_ARTICLE_CHARS).
+ARTICLE = "body " * 250
 BLOG_JOB = {
     "job_id": "j1",
     "content_type": "url",
@@ -30,7 +32,7 @@ TEXT_JOB = {
 }
 
 
-def _wire(monkeypatch, *, render=None, write_episode=None):
+def _wire(monkeypatch, *, render=None, write_episode=None, text=ARTICLE):
     monkeypatch.setenv("KB_SHARED_SECRET", "s")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
 
@@ -64,7 +66,7 @@ def _wire(monkeypatch, *, render=None, write_episode=None):
     monkeypatch.setattr(main.fetcher, "render", render or default_render)
     monkeypatch.setattr(
         main, "extract_content",
-        lambda html, url: ResponseObject(url=url, title="T", author="A", sitename="S", text="body"),
+        lambda html, url: ResponseObject(url=url, title="T", author="A", sitename="S", text=text),
     )
 
     class FakeSummarizer:
@@ -79,7 +81,14 @@ def _wire(monkeypatch, *, render=None, write_episode=None):
         sent.update(chat_id=chat_id, message_id=message_id, ro=ro, token=token)
 
     monkeypatch.setattr(main.telegram, "send_summary", fake_send)
-    return states, sent, {"episodes": episodes, "summaries": summaries, "archived": archived}
+
+    texts: list[dict] = []
+
+    async def fake_send_text(chat_id, message_id, text, token):
+        texts.append({"chat_id": chat_id, "message_id": message_id, "text": text})
+
+    monkeypatch.setattr(main.telegram, "send_text", fake_send_text)
+    return states, sent, {"episodes": episodes, "summaries": summaries, "archived": archived, "texts": texts}
 
 
 def test_blog_happy_path(monkeypatch):
@@ -100,13 +109,13 @@ def test_blog_happy_path(monkeypatch):
     [ep] = seen["episodes"]
     assert ep["job_id"] == "j1"
     assert ep["name"] == "T"
-    assert ep["body"] == "T\n\nbody"
+    assert ep["body"] == f"T\n\n{ARTICLE}"
     assert ep["source_description"] == "blog: https://example.com/post | site: S | author: A"
     assert ep["reference_time"].isoformat() == "2026-09-16T10:00:00+00:00"
     # D1 gets the same text with the indexing status, so the graph is rebuildable
-    assert seen["summaries"] == {"indexing": "T\n\nbody"}
+    assert seen["summaries"] == {"indexing": f"T\n\n{ARTICLE}"}
     # the cleaned article text is archived before summarization
-    assert seen["archived"] == {"j1": "body"}
+    assert seen["archived"] == {"j1": ARTICLE}
 
 
 def test_blog_failure_marks_failed_and_skips_reply(monkeypatch):
@@ -124,7 +133,37 @@ def test_blog_failure_marks_failed_and_skips_reply(monkeypatch):
     assert [s for s, _ in states] == ["fetching", "failed"]
     assert "dead url" in states[-1][1]
     assert sent == {}  # no Telegram reply on failure
+    assert seen["texts"] == []  # a broken fetch isn't "not supported"
     assert seen["episodes"] == []
+
+
+def test_blog_page_with_too_little_text_is_not_supported(monkeypatch):
+    states, sent, seen = _wire(monkeypatch, text="Please log in to continue.")
+    resp = TestClient(main.app).post("/jobs", headers=HEADERS, json=BLOG_JOB)
+
+    assert resp.status_code == 200
+    assert states == [("fetching", None), ("failed", "not supported: no article text found")]
+    [reply] = seen["texts"]
+    assert reply["chat_id"] == 42 and reply["message_id"] == 7
+    assert reply["text"] == "Skipped (not ingestible):\n• https://example.com/post — no article text found"
+    # nothing kept: no archive, no summary reply, no graph write
+    assert seen["archived"] == {}
+    assert sent == {}
+    assert seen["episodes"] == []
+
+
+def test_blog_http_error_is_not_supported(monkeypatch):
+    async def blocked(url, **kw):
+        raise main.fetcher.PageBlocked(403)
+
+    states, sent, seen = _wire(monkeypatch, render=blocked)
+    resp = TestClient(main.app).post("/jobs", headers=HEADERS, json=BLOG_JOB)
+
+    assert resp.status_code == 200
+    assert states == [("fetching", None), ("failed", "not supported: the site returned HTTP 403")]
+    [reply] = seen["texts"]
+    assert reply["text"].endswith("— the site returned HTTP 403")
+    assert seen["archived"] == {} and sent == {} and seen["episodes"] == []
 
 
 def test_blog_graph_failure_after_reply(monkeypatch):
@@ -141,7 +180,7 @@ def test_blog_graph_failure_after_reply(monkeypatch):
     assert [s for s, _ in states] == ["fetching", "summarizing", "indexing", "failed"]
     assert "FalkorDB unreachable" in states[-1][1]
     assert sent["ro"].summary == "SUMMARY"
-    assert seen["summaries"] == {"indexing": "T\n\nbody"}
+    assert seen["summaries"] == {"indexing": f"T\n\n{ARTICLE}"}
 
 
 def test_text_note_goes_straight_to_the_graph(monkeypatch):

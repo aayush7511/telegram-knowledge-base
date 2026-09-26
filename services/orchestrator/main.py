@@ -5,7 +5,7 @@ secret. Blog URLs are fully processed here: render (Playwright) → extract text
 metadata (Trafilatura + extruct) → summarize (Gemini) → reply on Telegram →
 write the summary into the knowledge graph (Graphiti → FalkorDB). Plain-text
 notes go straight into the graph. Other job types remain stubs (native-media
-ASR and Instagram/YouTube Pi delegation come in v3). See ../../CLAUDE.md for the
+Instagram/YouTube fetching comes in v3, native-media ASR in v4). See ../../CLAUDE.md for the
 architecture and ../../docs/design/v2.md for the graph decisions.
 
 Processing is **synchronous**: `/jobs` does the work and only then responds, so
@@ -81,13 +81,42 @@ async def post_status(
         log.error("status update failed: job_id=%s state=%s: %s", job_id, state, exc)
 
 
+# Below this much extracted text a page has nothing to remember: login walls,
+# error and bot-challenge pages, empty shells. Real articles measured 6K–67K
+# chars; bot-block pages 41–460 (docs/design/v3.md#no-useful-content).
+MIN_ARTICLE_CHARS = 1_000
+
+
+class NotSupported(Exception):
+    """The page has nothing to remember — reply and fail the job, don't save."""
+
+
+async def reply_not_supported(job: dict, reason: str) -> None:
+    """Tell the user a link was skipped, in the same shape as Worker 1's reply.
+
+    Best-effort like status posts: the job's `failed` state is the record.
+    """
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = job.get("chat_id")
+    if not token or chat_id is None:
+        log.info("not-supported reply skipped (token/chat_id missing): job_id=%s", job.get("job_id"))
+        return
+    text = f"Skipped (not ingestible):\n• {job.get('url')} — {reason}"
+    try:
+        await telegram.send_text(chat_id, job.get("message_id"), text, token=token)
+    except httpx.HTTPError as exc:
+        log.error("not-supported reply failed: job_id=%s: %s", job.get("job_id"), exc)
+
+
 async def process_blog_job(job: dict) -> None:
     """Blog pipeline: fetching → summarizing → reply → indexing → saved (or failed).
 
     Runs inline in the request. Never raises: a failure is recorded as terminal
     `failed` in D1 and swallowed, so Worker 2 still gets a 2xx and acks the
     queue message rather than replaying an expensive render+summarize that would
-    fail identically and burn the Gemini rate budget.
+    fail identically and burn the Gemini rate budget. A page with nothing to
+    remember (HTTP error, too little article text) gets a "not supported" reply
+    and ends `failed` before anything is archived, summarized, or graphed.
     """
     job_id = job["job_id"]
     url = job.get("url")
@@ -96,8 +125,13 @@ async def process_blog_job(job: dict) -> None:
             raise ValueError("blog job missing url")
 
         await post_status(job_id, "fetching")
-        html = await fetcher.render(url)
+        try:
+            html = await fetcher.render(url)
+        except fetcher.PageBlocked as exc:
+            raise NotSupported(f"the site returned HTTP {exc.status}") from exc
         ro: ResponseObject = extract_content(html, url)
+        if len((ro.text or "").strip()) < MIN_ARTICLE_CHARS:
+            raise NotSupported("no article text found")
         await articles.store_article(job_id, ro.text)
 
         await post_status(job_id, "summarizing")
@@ -137,6 +171,10 @@ async def process_blog_job(job: dict) -> None:
         )
 
         await post_status(job_id, "saved")
+    except NotSupported as exc:
+        log.info("blog job not supported: job_id=%s: %s", job_id, exc)
+        await reply_not_supported(job, str(exc))
+        await post_status(job_id, "failed", error=f"not supported: {exc}")
     except Exception as exc:
         log.exception("blog job failed: job_id=%s", job_id)
         await post_status(job_id, "failed", error=str(exc))

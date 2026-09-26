@@ -103,7 +103,7 @@ curl -s -X POST localhost:8080/jobs -H "X-KB-Secret: devsecret" \
   -d '{"job_id":"b1","content_type":"url","url_source":"blog","url":"https://example.com/post","chat_id":123,"message_id":9}'
 ```
 
-Run tests: `pytest` (from this directory) — 19 tests. The suite is offline:
+Run tests: `pytest` (from this directory) — 21 tests. The suite is offline:
 Playwright, Gemini, Telegram, Graphiti, and R2 are mocked. Graph-related env
 vars for a real local run: `FALKORDB_HOST` (+ `FALKORDB_PORT`,
 `FALKORDB_PASSWORD`), `OPENAI_API_KEY`; article archive: `R2_ACCOUNT_ID`,

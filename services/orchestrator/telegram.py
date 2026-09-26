@@ -68,6 +68,25 @@ async def send_summary(chat_id, message_id, ro: ResponseObject, *, token: str, c
             await client.aclose()
 
 
+async def send_text(chat_id, message_id, text: str, *, token: str, client=None):
+    """POST a plain-text message to Telegram, replying to the source message."""
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "reply_to_message_id": message_id,
+        "link_preview_options": {"is_disabled": True},
+    }
+    owns_client = client is None
+    client = client or httpx.AsyncClient(timeout=10)
+    try:
+        resp = await client.post(_API.format(token=token), json=payload)
+        resp.raise_for_status()
+        return resp.json()
+    finally:
+        if owns_client:
+            await client.aclose()
+
+
 def _esc(s: str | None) -> str:
     return _html.escape(s or "", quote=True)
 

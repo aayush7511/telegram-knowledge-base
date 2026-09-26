@@ -1,5 +1,5 @@
 export type ContentType = "text" | "voice" | "photo" | "video" | "document" | "url";
-export type UrlSource = "instagram" | "youtube" | "blog";
+export type UrlSource = "instagram" | "youtube" | "blog" | "x" | "reddit" | "stackexchange" | "github" | "pdf";
 
 export interface JobMedia {
   r2_key: string | null; // null at enqueue for URL jobs; the Pi fills it in after fetch
