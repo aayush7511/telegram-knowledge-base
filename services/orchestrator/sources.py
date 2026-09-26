@@ -10,11 +10,14 @@ placeholder. Decisions per source: ../../docs/design/v3.md.
 from __future__ import annotations
 
 import asyncio
+import html
+import os
 import re
 from typing import Awaitable, Callable
 from urllib.parse import parse_qs, urlparse
 
 import httpx
+import lxml.html
 import youtube_transcript_api as yta
 
 import extract
@@ -189,8 +192,84 @@ async def fetch_x(url: str) -> ResponseObject:
     )
 
 
+# --- Stack Exchange: official API (no key needed) ---------------------------
+# The question + its accepted answer, else the top-voted one, else the question
+# alone. A link to an answer saves the question + that answer. Without a key the
+# quota is 300 requests/day per IP, and Cloud Run's egress IPs are shared, so a
+# free key (STACKEXCHANGE_KEY, from stackapps.com) raises it to 10,000/day.
+
+_SE_API = "https://api.stackexchange.com/2.3/"
+
+
+def stackexchange_ref(url: str) -> tuple[str, str, str]:
+    """(site domain, "question" | "answer", id) from a question or answer link."""
+    u = urlparse(url)
+    site = (u.hostname or "").lower().removeprefix("www.")
+    segs = [s for s in u.path.split("/") if s]
+    first = segs[0].lower() if segs else ""
+    if first == "a" and len(segs) > 1 and segs[1].isdigit():
+        return site, "answer", segs[1]
+    if first in ("questions", "q") and len(segs) > 1 and segs[1].isdigit():
+        # /questions/{qid}/{slug}/{answer_id} is an answer permalink
+        if first == "questions" and len(segs) > 3 and segs[3].isdigit():
+            return site, "answer", segs[3]
+        return site, "question", segs[1]
+    raise ValueError(f"no Stack Exchange question or answer in {url}")
+
+
+async def _se_get(path: str, site: str, **params) -> list[dict]:
+    query = {"site": site, "filter": "withbody", **params}
+    if key := os.environ.get("STACKEXCHANGE_KEY"):
+        query["key"] = key
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.get(_SE_API + path, params=query)
+    data = resp.json()
+    if data.get("error_id"):
+        raise RuntimeError(f"Stack Exchange API error {data['error_id']}: {data.get('error_message')}")
+    return data.get("items", [])
+
+
+def _html_text(fragment: str) -> str:
+    return lxml.html.fromstring(fragment).text_content().strip() if (fragment or "").strip() else ""
+
+
+def _owner(item: dict) -> str | None:
+    name = (item.get("owner") or {}).get("display_name")
+    return html.unescape(name) if name else None
+
+
+async def fetch_stackexchange(url: str) -> ResponseObject:
+    site, kind, item_id = stackexchange_ref(url)
+    answer, label = None, None
+    if kind == "answer":
+        found = await _se_get(f"answers/{item_id}", site)
+        if not found:
+            raise NotSupported("the answer doesn't exist or was deleted")
+        answer, label, question_id = found[0], "Linked answer", found[0]["question_id"]
+    else:
+        question_id = item_id
+    found = await _se_get(f"questions/{question_id}", site)
+    if not found:
+        raise NotSupported("the question doesn't exist or was deleted")
+    question = found[0]
+    if answer is None and question.get("accepted_answer_id"):
+        answer, label = (await _se_get(f"answers/{question['accepted_answer_id']}", site) or [None])[0], "Accepted answer"
+    if answer is None and question.get("answer_count"):
+        top = await _se_get(f"questions/{question_id}/answers", site, sort="votes", order="desc", pagesize=1)
+        answer, label = (top or [None])[0], "Top-voted answer"
+    text = _html_text(question.get("body", ""))
+    if answer:
+        by = f" by {_owner(answer)}" if _owner(answer) else ""
+        text += f"\n\n{label}{by}:\n\n{_html_text(answer.get('body', ''))}"
+    return ResponseObject(
+        url=url, title=html.unescape(question.get("title", "")) or None, author=_owner(question),
+        sitename=site, text=text,
+    )
+
+
 FETCHERS: dict[str, Callable[[str], Awaitable[ResponseObject]]] = {
     "blog": fetch_blog,
     "youtube": fetch_youtube,
     "x": fetch_x,
+    "stackexchange": fetch_stackexchange,
 }

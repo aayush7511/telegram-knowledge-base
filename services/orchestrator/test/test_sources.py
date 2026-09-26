@@ -206,3 +206,72 @@ def test_fetch_blog_private_address_is_not_supported(monkeypatch):
     monkeypatch.setattr(fetcher, "render", private)
     with pytest.raises(sources.NotSupported, match="private network address"):
         run(sources.fetch_blog("https://example.com/redirects-inward"))
+
+
+# --- Stack Exchange --------------------------------------------------------
+
+@pytest.mark.parametrize("url, ref", [
+    ("https://stackoverflow.com/questions/11227809/why-is-it-faster", ("stackoverflow.com", "question", "11227809")),
+    ("https://stackoverflow.com/q/11227809", ("stackoverflow.com", "question", "11227809")),
+    ("https://stackoverflow.com/a/11227902", ("stackoverflow.com", "answer", "11227902")),
+    ("https://stackoverflow.com/questions/11227809/why/11227902#11227902", ("stackoverflow.com", "answer", "11227902")),
+    ("https://unix.stackexchange.com/questions/1/dd", ("unix.stackexchange.com", "question", "1")),
+])
+def test_stackexchange_ref(url, ref):
+    assert sources.stackexchange_ref(url) == ref
+
+
+QUESTION = {"question_id": 7, "title": "Why &quot;x&quot;?", "body": "<p>Why is <code>x</code> slow?</p>",
+            "owner": {"display_name": "Asker"}}
+
+
+def _wire_se(monkeypatch, routes):
+    calls = []
+
+    async def fake_get(path, site, **params):
+        calls.append(path)
+        return routes.get(path, [])
+
+    monkeypatch.setattr(sources, "_se_get", fake_get)
+    return calls
+
+
+def _answer(answer_id, body, name="Answerer"):
+    return {"answer_id": answer_id, "question_id": 7, "body": f"<p>{body}</p>", "owner": {"display_name": name}}
+
+
+def test_fetch_stackexchange_uses_the_accepted_answer(monkeypatch):
+    _wire_se(monkeypatch, {"questions/7": [{**QUESTION, "accepted_answer_id": 70, "answer_count": 3}],
+                           "answers/70": [_answer(70, "Branch prediction.")]})
+    ro = run(sources.fetch_stackexchange("https://stackoverflow.com/questions/7/why"))
+    assert ro.title == 'Why "x"?' and ro.author == "Asker" and ro.sitename == "stackoverflow.com"
+    assert ro.text == "Why is x slow?\n\nAccepted answer by Answerer:\n\nBranch prediction."
+
+
+def test_fetch_stackexchange_falls_back_to_top_voted(monkeypatch):
+    calls = _wire_se(monkeypatch, {"questions/7": [{**QUESTION, "answer_count": 2}],
+                                   "questions/7/answers": [_answer(71, "Caching.")]})
+    ro = run(sources.fetch_stackexchange("https://stackoverflow.com/q/7"))
+    assert ro.text.endswith("Top-voted answer by Answerer:\n\nCaching.")
+    assert calls == ["questions/7", "questions/7/answers"]
+
+
+def test_fetch_stackexchange_question_alone_when_unanswered(monkeypatch):
+    calls = _wire_se(monkeypatch, {"questions/7": [{**QUESTION, "answer_count": 0}]})
+    ro = run(sources.fetch_stackexchange("https://stackoverflow.com/q/7"))
+    assert ro.text == "Why is x slow?"
+    assert calls == ["questions/7"]
+
+
+def test_fetch_stackexchange_answer_link_saves_that_answer(monkeypatch):
+    calls = _wire_se(monkeypatch, {"answers/72": [_answer(72, "A linked one.")],
+                                   "questions/7": [{**QUESTION, "accepted_answer_id": 70, "answer_count": 3}]})
+    ro = run(sources.fetch_stackexchange("https://stackoverflow.com/a/72"))
+    assert ro.text.endswith("Linked answer by Answerer:\n\nA linked one.")
+    assert "answers/70" not in calls  # the accepted answer isn't fetched
+
+
+def test_fetch_stackexchange_deleted_question_is_not_supported(monkeypatch):
+    _wire_se(monkeypatch, {})
+    with pytest.raises(sources.NotSupported, match="doesn't exist"):
+        run(sources.fetch_stackexchange("https://stackoverflow.com/q/1"))
