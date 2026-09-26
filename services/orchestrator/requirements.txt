@@ -11,3 +11,5 @@ google-genai
 # are tied to this version.
 graphiti-core[falkordb]==0.30.2
 boto3
+# v3: YouTube captions. Pinned — it scrapes YouTube's internal API, which shifts.
+youtube-transcript-api==1.2.4

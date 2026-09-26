@@ -19,7 +19,11 @@ still stubs. See [CLAUDE.md](../../CLAUDE.md) for the architecture and
   to remember gets a "Skipped (not ingestible)" reply and ends `failed`.
 - `sources.py` — `FETCHERS`: one fetcher per `url_source` (url → `ResponseObject`,
   or `NotSupported`). `blog` renders + extracts and rejects pages under
-  `MIN_ARTICLE_CHARS` (1,000) of text.
+  `MIN_ARTICLE_CHARS` (1,000) of text; `youtube` is captions
+  (youtube-transcript-api, English preferred) + oEmbed title/channel, with a
+  240s timeout — Cloud Run's IPs get slow responses, not blocks
+  (spikes/youtube-transcript); `x` is FxTwitter's `/2/thread` — the author's
+  whole thread, X Articles flattened, quoted posts appended (spikes/x-fxtwitter).
 - `fetcher.py` — `render(url)`: headless Chromium → HTML; `PageBlocked` on an HTTP error.
 - `extract.py` — `extract_content(html, url)` → `ResponseObject` (text + metadata cascade).
 - `articles.py` — `store_article(job_id, text)`: cleaned article text → R2
@@ -109,8 +113,8 @@ curl -s -X POST localhost:8080/jobs -H "X-KB-Secret: devsecret" \
   -d '{"job_id":"b1","content_type":"url","url_source":"blog","url":"https://example.com/post","chat_id":123,"message_id":9}'
 ```
 
-Run tests: `pytest` (from this directory) — 24 tests. The suite is offline:
-Playwright, Gemini, Telegram, Graphiti, and R2 are mocked. Graph-related env
+Run tests: `pytest` (from this directory) — 45 tests. The suite is offline:
+Playwright, Gemini, Telegram, Graphiti, R2, YouTube, and FxTwitter are mocked. Graph-related env
 vars for a real local run: `FALKORDB_HOST` (+ `FALKORDB_PORT`,
 `FALKORDB_PASSWORD`), `OPENAI_API_KEY`; article archive: `R2_ACCOUNT_ID`,
 `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` (+ `R2_BUCKET`, default
