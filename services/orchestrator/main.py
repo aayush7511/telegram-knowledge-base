@@ -1,12 +1,13 @@
 """kb-orchestrator — Cloud Run processing orchestrator.
 
 Receives job descriptors pushed by Worker 2, authenticated with a shared
-secret. Blog URLs are fully processed here: render (Playwright) → extract text +
-metadata (Trafilatura + extruct) → summarize (Gemini) → reply on Telegram →
-write the summary into the knowledge graph (Graphiti → FalkorDB). Plain-text
-notes go straight into the graph. Other job types remain stubs (native-media
-ASR and Instagram/YouTube Pi delegation come in v3). See ../../CLAUDE.md for the
-architecture and ../../docs/design/v2.md for the graph decisions.
+secret. URL jobs share one pipeline: fetch (per source — sources.py; blogs are
+rendered with Playwright and extracted with Trafilatura + extruct) → summarize
+(Gemini) → reply on Telegram → write the content into the knowledge graph
+(Graphiti → FalkorDB). Plain-text notes go straight into the graph. Sources
+without a fetcher yet, and native media, remain stubs (native-media ASR comes
+in v4). See ../../CLAUDE.md for the architecture and ../../docs/design/v2.md /
+v3.md for the graph and source decisions.
 
 Processing is **synchronous**: `/jobs` does the work and only then responds, so
 everything happens inside the request window. Cloud Run only guarantees CPU
@@ -23,10 +24,9 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request
 
 import articles
-import fetcher
 import graph
+import sources
 import telegram
-from extract import ResponseObject, extract_content
 from summarize import Summarizer
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -36,6 +36,9 @@ log = logging.getLogger("kb-orchestrator")
 # token in the URL path — that would write the token into Cloud Run logs on every
 # reply. Warnings and errors still come through.
 logging.getLogger("httpx").setLevel(logging.WARNING)
+# pypdf warns once per font it can't fully decode (dozens per arXiv paper)
+# without changing the extracted text — measured identical with fontTools.
+logging.getLogger("pypdf").setLevel(logging.ERROR)
 
 app = FastAPI()
 
@@ -81,64 +84,117 @@ async def post_status(
         log.error("status update failed: job_id=%s state=%s: %s", job_id, state, exc)
 
 
-async def process_blog_job(job: dict) -> None:
-    """Blog pipeline: fetching → summarizing → reply → indexing → saved (or failed).
+# Below this much text an item isn't summarized or replied to — summarizing a
+# short post is pointless, and the 👌 reaction acknowledges it, as for notes.
+SUMMARY_MIN_CHARS = 1_500
+
+
+async def reply_not_supported(job: dict, target: str, reason: str) -> None:
+    """Tell the user an item (a link, or "your PDF") was skipped, in the same
+    shape as Worker 1's reply.
+
+    Best-effort like status posts: the job's `failed` state is the record.
+    """
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = job.get("chat_id")
+    if not token or chat_id is None:
+        log.info("not-supported reply skipped (token/chat_id missing): job_id=%s", job.get("job_id"))
+        return
+    text = f"Skipped (not ingestible):\n• {target} — {reason}"
+    try:
+        await telegram.send_text(chat_id, job.get("message_id"), text, token=token)
+    except httpx.HTTPError as exc:
+        log.error("not-supported reply failed: job_id=%s: %s", job.get("job_id"), exc)
+
+
+async def process_url_job(job: dict) -> None:
+    """A link: the fetcher comes from sources.FETCHERS by `url_source`."""
+    url, source = job.get("url"), job["url_source"]
+
+    async def fetch():
+        if not url:
+            raise ValueError("url job missing url")
+        return await sources.FETCHERS[source](url)
+
+    await process_source_job(job, source, fetch, target=url or "")
+
+
+async def process_pdf_file_job(job: dict) -> None:
+    """A PDF sent as a Telegram file: Worker 1 already stored it in R2."""
+    r2_key = (job.get("media") or {}).get("r2_key")
+
+    async def fetch():
+        if not r2_key:
+            raise ValueError("document job missing media.r2_key")
+        return await sources.fetch_pdf_file(r2_key)
+
+    await process_source_job(job, "pdf", fetch, target="your PDF")
+
+
+async def process_source_job(job: dict, source: str, fetch, *, target: str) -> None:
+    """Shared pipeline: fetching → [summarizing → reply] → indexing → saved (or failed).
+
+    `fetch()` returns the item's ResponseObject; everything after it is shared.
+    Items shorter than SUMMARY_MIN_CHARS skip summarizing and the reply.
+    `target` names the item in replies and is the episode name without a title.
 
     Runs inline in the request. Never raises: a failure is recorded as terminal
     `failed` in D1 and swallowed, so Worker 2 still gets a 2xx and acks the
-    queue message rather than replaying an expensive render+summarize that would
-    fail identically and burn the Gemini rate budget.
+    queue message rather than replaying an expensive fetch+summarize that would
+    fail identically and burn the Gemini rate budget. A link with nothing to
+    remember gets a "not supported" reply and ends `failed` before anything is
+    archived, summarized, or graphed.
     """
     job_id = job["job_id"]
-    url = job.get("url")
     try:
-        if not url:
-            raise ValueError("blog job missing url")
-
         await post_status(job_id, "fetching")
-        html = await fetcher.render(url)
-        ro: ResponseObject = extract_content(html, url)
+        ro = await fetch()
         await articles.store_article(job_id, ro.text)
 
-        await post_status(job_id, "summarizing")
-        # summarize() blocks (rate-limiter sleeps + a sync SDK call), so it goes
-        # to a worker thread — otherwise it would stall the whole event loop.
-        ro.summary = await asyncio.to_thread(
-            get_summarizer().summarize, ro.text, title=ro.title
-        )
+        if len(ro.text) >= SUMMARY_MIN_CHARS:
+            await post_status(job_id, "summarizing")
+            # summarize() blocks (rate-limiter sleeps + a sync SDK call), so it
+            # goes to a worker thread — otherwise it would stall the event loop.
+            ro.summary = await asyncio.to_thread(
+                get_summarizer().summarize, ro.text, title=ro.title
+            )
 
-        log.info(
-            "response object: job_id=%s title=%r author=%r sitename=%r summary_len=%d",
-            job_id, ro.title, ro.author, ro.sitename, len(ro.summary or ""),
-        )
+            log.info(
+                "response object: job_id=%s title=%r author=%r sitename=%r summary_len=%d",
+                job_id, ro.title, ro.author, ro.sitename, len(ro.summary or ""),
+            )
 
-        token = os.environ.get("TELEGRAM_BOT_TOKEN")
-        chat_id = job.get("chat_id")
-        if token and chat_id is not None:
-            await telegram.send_summary(chat_id, job.get("message_id"), ro, token=token)
-        else:
-            log.info("telegram reply skipped (token/chat_id missing): job_id=%s", job_id)
+            token = os.environ.get("TELEGRAM_BOT_TOKEN")
+            chat_id = job.get("chat_id")
+            if token and chat_id is not None:
+                await telegram.send_summary(chat_id, job.get("message_id"), ro, token=token)
+            else:
+                log.info("telegram reply skipped (token/chat_id missing): job_id=%s", job_id)
 
-        # The reply is out, so the user has the summary even if the graph write
-        # fails — that failure is recoverable from D1, which gets the episode
-        # text with the `indexing` status.
+        # The reply (if any) is out, so the user has the summary even if the
+        # graph write fails — that failure is recoverable from D1, which gets the
+        # episode text with the `indexing` status.
         # `summary` here is the D1 column name (predates the full-text switch,
         # see graph.py) — it now holds the full episode body, not a short
         # summary, which only strengthens its purpose: rebuilding the graph
         # from D1 alone without re-fetching a page that may have changed.
-        body, source_description = graph.blog_episode(ro)
+        body, source_description = graph.url_episode(ro, source)
         await post_status(job_id, "indexing", summary=body)
         await graph.write_episode(
             job_id,
-            name=ro.title or url,
+            name=ro.title or target,
             body=body,
             source_description=source_description,
             reference_time=graph.parse_time_received(job.get("time_received")),
         )
 
         await post_status(job_id, "saved")
+    except sources.NotSupported as exc:
+        log.info("job not supported: job_id=%s: %s", job_id, exc)
+        await reply_not_supported(job, target, str(exc))
+        await post_status(job_id, "failed", error=f"not supported: {exc}")
     except Exception as exc:
-        log.exception("blog job failed: job_id=%s", job_id)
+        log.exception("job failed: job_id=%s", job_id)
         await post_status(job_id, "failed", error=str(exc))
 
 
@@ -185,14 +241,27 @@ async def receive_job(request: Request):
     log.info("job received: %s", job)
 
     content_type = job.get("content_type")
-    if content_type == "url" and job.get("url_source") == "blog":
+    if content_type == "url" and job.get("url_source") in sources.FETCHERS:
         # Synchronous: Worker 2's push stays open for the full pipeline
-        # (render + summarize ~20-30s, plus the graph write). Outcome is
-        # recorded in D1 either way, so the response is 2xx regardless — see
-        # process_blog_job.
-        await process_blog_job(job)
+        # (fetch + summarize ~20-30s for a blog, plus the graph write). Outcome
+        # is recorded in D1 either way, so the response is 2xx regardless — see
+        # process_url_job.
+        await process_url_job(job)
     elif content_type == "text":
         await process_text_job(job)
+    elif content_type == "url":
+        # A source Worker 1 recognizes but no fetcher exists for yet (Reddit
+        # awaits API approval, Instagram is v4): say so instead of leaving the
+        # message at 👀.
+        reason = f"{job.get('url_source')} links aren't supported yet"
+        await reply_not_supported(job, job.get("url") or "", reason)
+        await post_status(job_id, "failed", error=f"not supported: {reason}")
+    elif content_type == "document" and (job.get("media") or {}).get("mime_type") == "application/pdf":
+        await process_pdf_file_job(job)
+    elif content_type == "document":
+        reason = "only PDF files are supported"
+        await reply_not_supported(job, "your file", reason)
+        await post_status(job_id, "failed", error=f"not supported: {reason}")
     else:
         # Other job types not built yet — placeholder status so the round trip
         # stays testable end to end.

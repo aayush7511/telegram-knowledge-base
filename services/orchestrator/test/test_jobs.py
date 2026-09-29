@@ -1,8 +1,8 @@
-"""POST /jobs: blog and text branches — state machine, Telegram reply, graph
+"""POST /jobs: URL and text branches — state machine, Telegram reply, graph
 write, failure handling.
 
-fetcher.render / summarizer / telegram.send_summary / graph.write_episode /
-articles.store_article are mocked so the test is offline; post_status is
+fetcher.render / extract_content / summarizer / telegram / graph.write_episode
+/ articles.store_article are mocked so the test is offline; post_status is
 captured to assert the state progression.
 """
 from fastapi.testclient import TestClient
@@ -11,6 +11,9 @@ import main
 from extract import ResponseObject
 
 HEADERS = {"X-KB-Secret": "s"}
+# Long enough to pass the article-text minimum and to get a summary
+# (sources.MIN_ARTICLE_CHARS, main.SUMMARY_MIN_CHARS).
+ARTICLE = "body " * 400
 BLOG_JOB = {
     "job_id": "j1",
     "content_type": "url",
@@ -30,7 +33,7 @@ TEXT_JOB = {
 }
 
 
-def _wire(monkeypatch, *, render=None, write_episode=None):
+def _wire(monkeypatch, *, render=None, write_episode=None, text=ARTICLE):
     monkeypatch.setenv("KB_SHARED_SECRET", "s")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
 
@@ -61,10 +64,10 @@ def _wire(monkeypatch, *, render=None, write_episode=None):
     async def default_render(url, **kw):
         return "<html>body</html>"
 
-    monkeypatch.setattr(main.fetcher, "render", render or default_render)
+    monkeypatch.setattr(main.sources.fetcher, "render", render or default_render)
     monkeypatch.setattr(
-        main, "extract_content",
-        lambda html, url: ResponseObject(url=url, title="T", author="A", sitename="S", text="body"),
+        main.sources.extract, "extract_content",
+        lambda html, url: ResponseObject(url=url, title="T", author="A", sitename="S", text=text),
     )
 
     class FakeSummarizer:
@@ -79,7 +82,14 @@ def _wire(monkeypatch, *, render=None, write_episode=None):
         sent.update(chat_id=chat_id, message_id=message_id, ro=ro, token=token)
 
     monkeypatch.setattr(main.telegram, "send_summary", fake_send)
-    return states, sent, {"episodes": episodes, "summaries": summaries, "archived": archived}
+
+    texts: list[dict] = []
+
+    async def fake_send_text(chat_id, message_id, text, token):
+        texts.append({"chat_id": chat_id, "message_id": message_id, "text": text})
+
+    monkeypatch.setattr(main.telegram, "send_text", fake_send_text)
+    return states, sent, {"episodes": episodes, "summaries": summaries, "archived": archived, "texts": texts}
 
 
 def test_blog_happy_path(monkeypatch):
@@ -100,13 +110,13 @@ def test_blog_happy_path(monkeypatch):
     [ep] = seen["episodes"]
     assert ep["job_id"] == "j1"
     assert ep["name"] == "T"
-    assert ep["body"] == "T\n\nbody"
+    assert ep["body"] == f"T\n\n{ARTICLE}"
     assert ep["source_description"] == "blog: https://example.com/post | site: S | author: A"
     assert ep["reference_time"].isoformat() == "2026-09-16T10:00:00+00:00"
     # D1 gets the same text with the indexing status, so the graph is rebuildable
-    assert seen["summaries"] == {"indexing": "T\n\nbody"}
+    assert seen["summaries"] == {"indexing": f"T\n\n{ARTICLE}"}
     # the cleaned article text is archived before summarization
-    assert seen["archived"] == {"j1": "body"}
+    assert seen["archived"] == {"j1": ARTICLE}
 
 
 def test_blog_failure_marks_failed_and_skips_reply(monkeypatch):
@@ -124,7 +134,37 @@ def test_blog_failure_marks_failed_and_skips_reply(monkeypatch):
     assert [s for s, _ in states] == ["fetching", "failed"]
     assert "dead url" in states[-1][1]
     assert sent == {}  # no Telegram reply on failure
+    assert seen["texts"] == []  # a broken fetch isn't "not supported"
     assert seen["episodes"] == []
+
+
+def test_blog_page_with_too_little_text_is_not_supported(monkeypatch):
+    states, sent, seen = _wire(monkeypatch, text="Please log in to continue.")
+    resp = TestClient(main.app).post("/jobs", headers=HEADERS, json=BLOG_JOB)
+
+    assert resp.status_code == 200
+    assert states == [("fetching", None), ("failed", "not supported: no article text found")]
+    [reply] = seen["texts"]
+    assert reply["chat_id"] == 42 and reply["message_id"] == 7
+    assert reply["text"] == "Skipped (not ingestible):\n• https://example.com/post — no article text found"
+    # nothing kept: no archive, no summary reply, no graph write
+    assert seen["archived"] == {}
+    assert sent == {}
+    assert seen["episodes"] == []
+
+
+def test_blog_http_error_is_not_supported(monkeypatch):
+    async def blocked(url, **kw):
+        raise main.sources.fetcher.PageBlocked(403)
+
+    states, sent, seen = _wire(monkeypatch, render=blocked)
+    resp = TestClient(main.app).post("/jobs", headers=HEADERS, json=BLOG_JOB)
+
+    assert resp.status_code == 200
+    assert states == [("fetching", None), ("failed", "not supported: the site returned HTTP 403")]
+    [reply] = seen["texts"]
+    assert reply["text"].endswith("— the site returned HTTP 403")
+    assert seen["archived"] == {} and sent == {} and seen["episodes"] == []
 
 
 def test_blog_graph_failure_after_reply(monkeypatch):
@@ -141,7 +181,93 @@ def test_blog_graph_failure_after_reply(monkeypatch):
     assert [s for s, _ in states] == ["fetching", "summarizing", "indexing", "failed"]
     assert "FalkorDB unreachable" in states[-1][1]
     assert sent["ro"].summary == "SUMMARY"
-    assert seen["summaries"] == {"indexing": "T\n\nbody"}
+    assert seen["summaries"] == {"indexing": f"T\n\n{ARTICLE}"}
+
+
+def test_short_item_skips_summary_and_reply(monkeypatch):
+    """A short item (a post, a one-paragraph answer) goes straight to the graph."""
+    states, sent, seen = _wire(monkeypatch)
+
+    async def fetch_post(url):
+        return ResponseObject(url=url, title=None, author="karpathy", text="A short post.")
+
+    monkeypatch.setitem(main.sources.FETCHERS, "x", fetch_post)
+    job = {**BLOG_JOB, "url_source": "x", "url": "https://x.com/karpathy/status/1"}
+    resp = TestClient(main.app).post("/jobs", headers=HEADERS, json=job)
+
+    assert resp.status_code == 200
+    assert [s for s, _ in states] == ["fetching", "indexing", "saved"]
+    assert sent == {} and seen["texts"] == []  # 👌 is the acknowledgement
+    [ep] = seen["episodes"]
+    assert ep["name"] == "https://x.com/karpathy/status/1"  # no title → the url
+    assert ep["body"] == "A short post."
+    assert ep["source_description"] == "x: https://x.com/karpathy/status/1 | author: karpathy"
+    assert seen["archived"] == {"j1": "A short post."}
+
+
+def test_url_source_without_a_fetcher_is_not_supported_yet(monkeypatch):
+    states, sent, seen = _wire(monkeypatch)
+    job = {**BLOG_JOB, "url_source": "reddit", "url": "https://redd.it/1abc2de"}
+    resp = TestClient(main.app).post("/jobs", headers=HEADERS, json=job)
+
+    assert resp.status_code == 200
+    assert states == [("failed", "not supported: reddit links aren't supported yet")]
+    [reply] = seen["texts"]
+    assert reply["text"] == "Skipped (not ingestible):\n• https://redd.it/1abc2de — reddit links aren't supported yet"
+    assert seen["episodes"] == []
+
+
+PDF_FILE_JOB = {
+    "job_id": "j4",
+    "content_type": "document",
+    "media": {"r2_key": "raw-media/j4.pdf", "mime_type": "application/pdf"},
+    "chat_id": 42,
+    "message_id": 9,
+    "time_received": "2026-09-16T10:00:00.000Z",
+}
+
+
+def test_pdf_file_runs_the_shared_pipeline(monkeypatch):
+    states, sent, seen = _wire(monkeypatch)
+    keys = []
+
+    async def fake_pdf_file(r2_key):
+        keys.append(r2_key)
+        return ResponseObject(url="Telegram file", title=None, sitename="Telegram", text=ARTICLE)
+
+    monkeypatch.setattr(main.sources, "fetch_pdf_file", fake_pdf_file)
+    resp = TestClient(main.app).post("/jobs", headers=HEADERS, json=PDF_FILE_JOB)
+
+    assert resp.status_code == 200
+    assert keys == ["raw-media/j4.pdf"]
+    assert [s for s, _ in states] == ["fetching", "summarizing", "indexing", "saved"]
+    assert sent["ro"].summary == "SUMMARY"
+    [ep] = seen["episodes"]
+    assert ep["name"] == "your PDF"  # no title → the reply target
+    assert ep["source_description"] == "pdf: Telegram file | site: Telegram"
+
+
+def test_scanned_pdf_file_is_not_supported(monkeypatch):
+    states, sent, seen = _wire(monkeypatch)
+
+    async def scanned(r2_key):
+        raise main.sources.NotSupported("the PDF has no text layer (scanned?) — OCR isn't supported")
+
+    monkeypatch.setattr(main.sources, "fetch_pdf_file", scanned)
+    TestClient(main.app).post("/jobs", headers=HEADERS, json=PDF_FILE_JOB)
+
+    assert [s for s, _ in states] == ["fetching", "failed"]
+    [reply] = seen["texts"]
+    assert reply["text"].startswith("Skipped (not ingestible):\n• your PDF — the PDF has no text layer")
+
+
+def test_other_documents_are_not_supported(monkeypatch):
+    states, sent, seen = _wire(monkeypatch)
+    job = {**PDF_FILE_JOB, "media": {"r2_key": "raw-media/j4.docx", "mime_type": "application/msword"}}
+    TestClient(main.app).post("/jobs", headers=HEADERS, json=job)
+
+    assert states == [("failed", "not supported: only PDF files are supported")]
+    assert seen["texts"][0]["text"] == "Skipped (not ingestible):\n• your file — only PDF files are supported"
 
 
 def test_text_note_goes_straight_to_the_graph(monkeypatch):
@@ -210,7 +336,7 @@ def test_summarize_runs_off_the_event_loop(monkeypatch):
         loop_thread["name"] = threading.current_thread().name
         return "<html>body</html>"
 
-    monkeypatch.setattr(main.fetcher, "render", record_render)
+    monkeypatch.setattr(main.sources.fetcher, "render", record_render)
 
     TestClient(main.app).post("/jobs", headers=HEADERS, json=BLOG_JOB)
 

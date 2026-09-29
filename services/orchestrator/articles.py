@@ -24,16 +24,29 @@ def article_key(job_id: str) -> str:
     return f"articles/{job_id}.txt"
 
 
-def _put(key: str, text: str) -> None:
-    client = boto3.client(
+def _client():
+    return boto3.client(
         "s3",
         endpoint_url=f"https://{os.environ['R2_ACCOUNT_ID']}.r2.cloudflarestorage.com",
         aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
         aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
         region_name="auto",
     )
-    client.put_object(
-        Bucket=os.environ.get("R2_BUCKET", "kb-raw-media"),
+
+
+def _bucket() -> str:
+    return os.environ.get("R2_BUCKET", "kb-raw-media")
+
+
+def read_object(key: str) -> bytes:
+    """Bytes of an R2 object (e.g. a Telegram file Worker 1 stored under
+    `raw-media/`). Blocking — call via asyncio.to_thread. Raises if missing."""
+    return _client().get_object(Bucket=_bucket(), Key=key)["Body"].read()
+
+
+def _put(key: str, text: str) -> None:
+    _client().put_object(
+        Bucket=_bucket(),
         Key=key,
         Body=text.encode("utf-8"),
         ContentType="text/plain; charset=utf-8",

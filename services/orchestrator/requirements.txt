@@ -11,3 +11,5 @@ google-genai
 # are tied to this version.
 graphiti-core[falkordb]==0.30.2
 boto3
+# v3: PDF text (links + Telegram files). BSD; pure Python.
+pypdf==6.19.0

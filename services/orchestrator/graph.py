@@ -73,17 +73,17 @@ async def get_graphiti() -> Graphiti:
     return _graphiti
 
 
-def blog_episode(ro: ResponseObject) -> tuple[str, str]:
-    """(episode body, source_description) for a blog job.
+def url_episode(ro: ResponseObject, source: str) -> tuple[str, str]:
+    """(episode body, source_description) for a URL job from `source` (url_source).
 
-    Body is title + the full cleaned article text, not the summary — see the
-    module docstring. URL, site, and author go in source_description, which
+    Body is title + the full fetched text, not the summary — see the module
+    docstring. URL, site, and author go in source_description, which
     Graphiti's text-extraction prompt never sees — in M0 a metadata header in
     the body turned `anthropic.com` and `paulgraham.com` into entities and
     crowded out the real content.
     """
-    body = f"{ro.title}\n\n{ro.text}" if ro.title else ro.text
-    meta = [f"blog: {ro.url}"] + [f"{k}: {v}" for k, v in (("site", ro.sitename), ("author", ro.author)) if v]
+    body = "\n\n".join(part for part in (ro.title, ro.text) if part)
+    meta = [f"{source}: {ro.url}"] + [f"{k}: {v}" for k, v in (("site", ro.sitename), ("author", ro.author)) if v]
     return body, " | ".join(meta)
 
 
