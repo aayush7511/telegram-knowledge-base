@@ -7,6 +7,11 @@
   // reach a private address (workers-oauth-provider requires it for CIMD).
   "compatibility_flags": ["global_fetch_strictly_public"],
   "observability": { "enabled": true },
+  // Served only at kb-mcp.aayush7511.workers.dev: the OAuth issuer and resource
+  // are pinned to it (src/index.ts), so per-version preview URLs would only be
+  // an extra way in.
+  "workers_dev": true,
+  "preview_urls": false,
 
   "vars": {
     "CLOUD_RUN_URL": "https://kb-orchestrator-135554694779.us-central1.run.app"
