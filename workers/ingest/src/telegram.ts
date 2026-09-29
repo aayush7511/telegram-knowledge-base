@@ -76,8 +76,8 @@ export function sendMessage(
   chat_id: number,
   text: string,
   reply_to_message_id?: number,
-): Promise<unknown> {
-  return call(token, "sendMessage", {
+): Promise<TgMessage> {
+  return call<TgMessage>(token, "sendMessage", {
     chat_id,
     text,
     ...(reply_to_message_id ? { reply_parameters: { message_id: reply_to_message_id } } : {}),

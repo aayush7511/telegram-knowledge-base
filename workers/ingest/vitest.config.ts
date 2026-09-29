@@ -5,7 +5,9 @@ import { Response as MiniflareResponse, type Request as MiniflareRequest } from 
 
 // Fake Telegram Bot API for integration tests. All other outbound traffic is blocked
 // so tests can never hit the real network.
-function fakeTelegramApi(request: MiniflareRequest): MiniflareResponse {
+let nextBotMessageId = 9000;
+
+async function fakeTelegramApi(request: MiniflareRequest): Promise<MiniflareResponse> {
   const url = new URL(request.url);
   if (url.hostname !== "api.telegram.org") {
     return new MiniflareResponse("net connect disabled in tests", { status: 502 });
@@ -16,8 +18,16 @@ function fakeTelegramApi(request: MiniflareRequest): MiniflareResponse {
   if (url.pathname.startsWith("/file/")) {
     return new MiniflareResponse("fake-ogg-bytes");
   }
-  // sendMessage, setMessageReaction, ...
-  return MiniflareResponse.json({ ok: true, result: {} });
+  if (url.pathname.endsWith("/sendMessage")) {
+    // the sent Message, as the real API returns it — the save path keys jobs on its message_id
+    const { chat_id, text } = (await request.json()) as { chat_id: number; text: string };
+    return MiniflareResponse.json({
+      ok: true,
+      result: { message_id: nextBotMessageId++, date: 1752537600, chat: { id: chat_id, type: "private" }, text },
+    });
+  }
+  // setMessageReaction, ...
+  return MiniflareResponse.json({ ok: true, result: true });
 }
 
 export default defineConfig(async () => {

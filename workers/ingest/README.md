@@ -5,6 +5,13 @@ classifies content, uploads native media to R2, records jobs in D1, enqueues
 job descriptors to the `kb-jobs` queue, and ACKs fast. See
 [convo_summary.md](../../convo_summary.md) for the full architecture.
 
+It also exports an RPC entrypoint, `IngestRpc`, for the MCP connector
+(`kb-mcp`) to save through a service binding: `createJobs(content,
+clientName)` posts "📥 Saving from <client>: …" to the owner chat and
+processes `content` (up to 4,000 chars) exactly like a text message, keyed to
+that bot message. It isn't reachable from the internet, so it has no secret.
+See [docs/design/v3.md](../../docs/design/v3.md#mcp-connector).
+
 ## Develop
 
 ```bash
