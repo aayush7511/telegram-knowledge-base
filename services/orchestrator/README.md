@@ -88,6 +88,11 @@ the acknowledgement.
 - `POST /jobs` — job descriptor intake. Requires `X-KB-Secret` header matching
   the `KB_SHARED_SECRET` env var; 401 otherwise. Returns
   `{"accepted": true, "job_id": ...}`.
+- `POST /search` — fact search for the MCP connector (`kb-mcp`). Same
+  `X-KB-Secret` check. Body `{"query": str, "limit": 1–30 (default 10)}`;
+  returns `{"results": [{fact, valid_at, invalid_at, sources: [{title, kind,
+  url, saved_at}]}]}`. Never returns episode bodies. See
+  [docs/design/v3.md](../../docs/design/v3.md#mcp-connector).
 - `GET /health` — liveness check. (Not `/healthz`: Google's frontend reserves
   that path on run.app and 404s it before it reaches the container.)
 
@@ -125,7 +130,7 @@ curl -s -X POST localhost:8080/jobs -H "X-KB-Secret: devsecret" \
   -d '{"job_id":"b1","content_type":"url","url_source":"blog","url":"https://example.com/post","chat_id":123,"message_id":9}'
 ```
 
-Run tests: `pytest` (from this directory) — 89 tests. The suite is offline:
+Run tests: `pytest` (from this directory) — 103 tests. The suite is offline:
 Playwright, Gemini, Telegram, Graphiti, R2, Supadata, YouTube oEmbed, FxTwitter, Stack Exchange, and GitHub are mocked. Graph-related env
 vars for a real local run: `FALKORDB_HOST` (+ `FALKORDB_PORT`,
 `FALKORDB_PASSWORD`), `OPENAI_API_KEY`; article archive: `R2_ACCOUNT_ID`,

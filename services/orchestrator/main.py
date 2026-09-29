@@ -227,11 +227,32 @@ def health():
     return {"ok": True}
 
 
-@app.post("/jobs")
-async def receive_job(request: Request):
+def require_secret(request: Request) -> None:
     secret = os.environ.get("KB_SHARED_SECRET")
     if not secret or request.headers.get("X-KB-Secret") != secret:
         raise HTTPException(status_code=401, detail="bad or missing X-KB-Secret")
+
+
+SEARCH_MAX_RESULTS = 30
+
+
+@app.post("/search")
+async def search(request: Request):
+    """Fact search for the MCP connector (kb-mcp) — see docs/design/v3.md#mcp-connector."""
+    require_secret(request)
+    body = await request.json()
+    query = (body.get("query") or "").strip()
+    limit = body.get("limit", 10)
+    if not query:
+        raise HTTPException(status_code=400, detail="query required")
+    if type(limit) is not int or not 1 <= limit <= SEARCH_MAX_RESULTS:
+        raise HTTPException(status_code=400, detail=f"limit must be an integer from 1 to {SEARCH_MAX_RESULTS}")
+    return {"results": await graph.search_facts(query, limit)}
+
+
+@app.post("/jobs")
+async def receive_job(request: Request):
+    require_secret(request)
 
     job = await request.json()
     job_id = job.get("job_id")

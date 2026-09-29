@@ -1,4 +1,5 @@
-"""Knowledge-graph write: one Graphiti episode per job, stored in FalkorDB.
+"""Knowledge graph: one Graphiti episode per job, stored in FalkorDB, and fact
+search over it for the MCP connector.
 
 Graphiti runs in-process: it calls OpenAI to extract entities and relationships
 from the episode text, embeds them, and writes nodes/edges to FalkorDB over the
@@ -36,6 +37,7 @@ from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
 from graphiti_core.llm_client.config import LLMConfig
 from graphiti_core.llm_client.openai_client import OpenAIClient
 from graphiti_core.nodes import EpisodeType, EpisodicNode
+from graphiti_core.search.search_config_recipes import EDGE_HYBRID_SEARCH_RRF
 
 from extract import ResponseObject
 
@@ -127,3 +129,67 @@ async def write_episode(
     log.info(
         "graph write: job_id=%s entities=%d facts=%d", job_id, len(result.nodes), len(result.edges)
     )
+
+
+def parse_source(source_description: str) -> tuple[str, str | None]:
+    """(kind, url) from an episode's source_description — the inverse of url_episode.
+
+    URL episodes read "<source>: <url> | site: … | author: …"; a Telegram PDF
+    file's "url" is "Telegram file", and notes are "telegram text note", so
+    only an http(s) value counts as a link.
+    """
+    head = source_description.split(" | ", 1)[0]
+    kind, sep, value = head.partition(": ")
+    if not sep:
+        return ("note" if head == "telegram text note" else head), None
+    return kind, value if value.startswith(("http://", "https://")) else None
+
+
+def _iso(value: datetime | None) -> str | None:
+    return value.isoformat() if value else None
+
+
+async def search_facts(query: str, limit: int) -> list[dict]:
+    """Hybrid search (BM25 + embeddings, RRF-ranked — no LLM call) over facts,
+    each with the episodes it came from as sources. Episode bodies (full
+    article text) are never returned.
+
+    Uses search_() with a copied config: Graphiti's search() sets `limit` on the
+    shared module-level recipe, which concurrent requests would race on.
+
+    No group_ids: the driver's graph already is GRAPH_NAME, and passing it
+    breaks BM25 — Graphiti filters the fulltext query on `"second\\-brain"`,
+    but FalkorDB's tokenizer splits the stored value at the hyphen, so it
+    never matches and every keyword search came back empty (checked live
+    2026-09-29).
+
+    No relevance cutoff either: measured on the live graph, relevant facts
+    score 0.35–0.46 cosine and unrelated ones 0.25–0.41, so no threshold
+    separates them. The calling model judges relevance from the facts.
+    """
+    graphiti = await get_graphiti()
+    config = EDGE_HYBRID_SEARCH_RRF.model_copy(update={"limit": limit})
+    edges = (await graphiti.search_(query, config=config, group_ids=None)).edges
+
+    episode_uuids = list(dict.fromkeys(u for edge in edges for u in edge.episodes))
+    episodes = await EpisodicNode.get_by_uuids(graphiti.driver, episode_uuids) if episode_uuids else []
+    by_uuid = {ep.uuid: ep for ep in episodes}
+
+    results = []
+    for edge in edges:
+        sources = []
+        for uuid in edge.episodes:
+            ep = by_uuid.get(uuid)
+            if ep is None:
+                continue
+            kind, url = parse_source(ep.source_description)
+            sources.append({"title": ep.name, "kind": kind, "url": url, "saved_at": _iso(ep.valid_at)})
+        results.append(
+            {
+                "fact": edge.fact,
+                "valid_at": _iso(edge.valid_at),
+                "invalid_at": _iso(edge.invalid_at),
+                "sources": sources,
+            }
+        )
+    return results
