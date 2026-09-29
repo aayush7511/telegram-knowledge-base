@@ -18,10 +18,10 @@ flowchart TD
     MEDIA --> GROQ["Groq API (planned, v4)<br/>Whisper large-v3-turbo — ASR only"]
     GROQ -->|transcript| SUM
 
-    SUM -->|episode, planned v2| GRAPHITI["Graphiti (planned, v2)<br/>library inside Cloud Run:<br/>entity + relationship extraction"]
-    CR -->|text notes, planned v2| GRAPHITI
-    GRAPHITI --> GLLM["OpenAI (planned, v2)<br/>gpt-4.1-mini + text-embedding-3-small"]
-    GRAPHITI -->|Direct VPC egress, private IP| KG[("FalkorDB (planned, v2)<br/>Docker on GCE e2-micro")]
+    SUM -->|episode| GRAPHITI["Graphiti<br/>library inside Cloud Run:<br/>entity + relationship extraction"]
+    CR -->|text notes| GRAPHITI
+    GRAPHITI --> GLLM["OpenAI<br/>gpt-4.1-mini + text-embedding-3-small"]
+    GRAPHITI -->|Direct VPC egress, private IP| KG[("FalkorDB<br/>Docker on GCE e2-micro")]
 
     MC["Claude / Codex<br/>(MCP clients)"] -->|OAuth: consent + Google sign-in, owner only| MCPW["Cloudflare Worker kb-mcp<br/>MCP: search_memory, save_to_memory"]
     MCPW -->|search, X-KB-Secret| CR
@@ -29,4 +29,4 @@ flowchart TD
 
     CR -.->|status updates| W2
     W2 -.->|status updates| D1[(D1)]
-    W2 -.->|👌 once every job of the message is saved, planned v2| TG
+    W2 -.->|👌 once every job of the message is saved| TG
