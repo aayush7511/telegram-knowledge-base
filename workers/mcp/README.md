@@ -66,3 +66,16 @@ Server URL: `https://kb-mcp.aayush7511.workers.dev/mcp`
 
 Each client shows the consent page once, then signs in with Google; refresh
 tokens keep it connected while it's used at least every 30 days.
+
+## Skill
+
+[skill/kb-memory/SKILL.md](skill/kb-memory/SKILL.md) teaches Claude when to
+use the connector: search the knowledge base whenever the answer should fit the
+owner (recommendations, learning, career, their projects), say which parts came
+from it, and keep using its own knowledge and the web alongside it. A saved
+item means *worth keeping*, not *read*. Install for Claude Code by linking it
+into the user skills folder:
+
+```bash
+ln -s "$PWD/skill/kb-memory" ~/.claude/skills/kb-memory
+```
