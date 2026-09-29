@@ -41,3 +41,16 @@ def test_parse_time_received_handles_z_suffix():
 def test_parse_time_received_falls_back_to_now():
     t = graph.parse_time_received(None)
     assert t.tzinfo == timezone.utc
+
+
+def test_parse_source_reads_the_kind_and_url_back_from_url_episode():
+    assert graph.parse_source("blog: https://x.test/p | site: X | author: Ann") == ("blog", "https://x.test/p")
+    assert graph.parse_source("x: https://x.com/a/status/1") == ("x", "https://x.com/a/status/1")
+
+
+def test_parse_source_telegram_note_has_no_url():
+    assert graph.parse_source("telegram text note") == ("note", None)
+
+
+def test_parse_source_telegram_pdf_file_has_no_url():
+    assert graph.parse_source("pdf: Telegram file | site: Telegram") == ("pdf", None)

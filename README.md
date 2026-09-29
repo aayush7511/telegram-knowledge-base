@@ -1,107 +1,109 @@
 # telegram-knowledge-base
 
-A personal AI memory tool. Send anything to a Telegram bot — text notes, voice memos, links, videos, documents — and it gets ingested, transcribed/summarized, and stored in a temporal knowledge graph that resurfaces relevant context later.
+**A personal AI memory: send anything to a Telegram bot, and Claude can recall it later.**
 
-## Idea
+Share a blog post, YouTube video, X thread, GitHub repo, Stack Overflow answer, PDF, or a plain note with the bot. It fetches the content, summarizes it, and writes it into a temporal knowledge graph. Weeks later, Claude (claude.ai, Desktop, Claude Code) or Codex searches that graph through an MCP connector and answers with the sources you saved, linked and dated.
 
-Content flows in through a single Telegram chat and out into a knowledge graph with temporal awareness (when a project started, when you learned something). Later conversations surface related past context automatically. Core constraints: **$0/month in recurring service fees** (free tiers + one-time Raspberry Pi hardware), transcription as fast as possible, cheap/local models where needed.
+Deployed and in daily use. Runs entirely on free tiers: **$0/month**.
 
-Full architecture and every design decision: [convo_summary.md](convo_summary.md).
+```text
+You, in Telegram:  https://lilianweng.github.io/posts/2023-06-23-agent/
+Bot:               👀  → replies with a 3–5 sentence summary → 👌 once it's in the graph
 
+You, in Claude:    "What should I read next on agent memory?"
+Claude:            searches the graph → "From your knowledge base: you saved Lilian Weng's
+                   'LLM Powered Autonomous Agents', which covers … start there, then …"
 ```
-Telegram → CF Worker 1 (validate/classify/store) → CF Queue → CF Worker 2 → Google Cloud Run
-                                                                                │
-              Groq (Whisper ASR + Llama summarize) ← Raspberry Pi (yt-dlp) ←────┤
-                                                                                ↓
-                                              Graphiti + FalkorDB knowledge graph
+
+## Highlights
+
+- **Agentic retrieval over your own data.** An MCP server with two task-shaped tools (`search_memory`, `save_to_memory`), OAuth 2.1 + Google sign-in, and per-tool rate limits. A companion [Claude skill](workers/mcp/skill/kb-memory/SKILL.md) teaches the model *when* personal context would change an answer, and that a saved item means "worth keeping", not "read".
+- **Model choices backed by evals.** Before picking Graphiti's extraction model, an [offline eval](docs/design/v2.md#m0-results-2026-09-11) ran 8 real articles plus an unrelated control essay through two models. `gpt-5-nano` was faster but invented links between unrelated articles, so `gpt-4.1-mini` was pinned at temperature 0.
+- **Context engineering, measured.** Moving URL/site/author out of the episode text removed every metadata-looking fake entity and took one abstract post from only its site and title to 9 real concepts. Retrieval testing on the live graph found a tokenizer bug that had silently disabled keyword search ([details](docs/design/v3.md#search-endpoint)).
+- **Built for retries.** Telegram retries slow webhooks, so the receiver ACKs fast and queues the work. Jobs move through a validated state machine stored in D1, and every row can be re-enqueued on its own. Dedup is keyed on `(chat_id, message_id)`.
+- **$0 by design.** Every infrastructure choice fits a free tier, with the trade-offs written down. Example: Direct VPC egress instead of a ~$5–15/month VPC connector.
+- **248 tests**, with the Workers suites running inside the real `workerd` runtime rather than against mocked bindings.
+
+## Architecture
+
+![Architecture diagram](docs/architecture.svg)
+
+| Component | Role | Stack |
+|---|---|---|
+| [`workers/ingest`](workers/ingest) | Telegram webhook: auth, dedup, classify, URL rules, media → R2, enqueue, 👀 | Cloudflare Worker, D1, R2, Queues (TypeScript) |
+| [`workers/forward`](workers/forward) | Queue consumer → Cloud Run; the only path to D1 for status; 👀 → 👌 | Cloudflare Worker (TypeScript) |
+| [`services/orchestrator`](services/orchestrator) | Fetch → extract → summarize → reply → write to the graph; `/search` for MCP | Cloud Run, FastAPI, Playwright, Trafilatura, Graphiti (Python) |
+| [`workers/mcp`](workers/mcp) | MCP connector for Claude and Codex, OAuth + Google sign-in, usage caps | Cloudflare Worker, MCP SDK v2, workers-oauth-provider |
+| [`infra/falkordb`](infra/falkordb) | The knowledge-graph store, private to the VPC | FalkorDB in Docker on a GCE e2-micro |
+
+Every component has its own README with local dev and deploy steps. The reasoning behind each decision is in the [architecture decision table](CLAUDE.md#key-architecture-decisions-and-why).
+
+### Job lifecycle
+
+```text
+received → queued → forwarded → fetching → summarizing → indexing → saved
+                                      └──────────── failed (from any state, re-drivable) ─┘
 ```
 
-## Tech Stack
+State lives in D1, not in the queue message. Transitions are validated (forward-only; `saved` is terminal), so a retried or out-of-order status update can never move a job backwards.
 
-**Live today**
-- **Cloudflare Workers** — webhook receiver + queue-consumer/forwarder (TypeScript, Wrangler)
-- **Cloudflare Queues** — job transport between pipeline stages
-- **Cloudflare R2** — raw media storage (2-day lifecycle on `raw-media/`)
-- **Cloudflare D1** — SQLite job tracking + inline message content
-- **Telegram Bot API** — the single ingestion channel (webhook + secret token)
-- **Vitest + @cloudflare/vitest-pool-workers** — tests run inside real workerd
-- **Google Cloud Run** — processing orchestrator, deployed as an auth-checking stub (Python + FastAPI, request-based billing, scales to zero); real processing not built yet
+## What it handles today
 
-**Planned**
-- **Groq API** — Whisper large-v3-turbo ASR + Llama 3.3 70B summarization (free tiers)
-- **Raspberry Pi** — residential-IP fetcher running yt-dlp + PO-token provider
-- **Graphiti + FalkorDB** — self-hosted temporal knowledge graph (Docker on the Pi)
+| Input | How it's read |
+|---|---|
+| Blog posts and articles | Headless Chromium render → Trafilatura text + structured metadata |
+| YouTube | Captions via Supadata (YouTube blocks Cloud Run's IPs; [spike](spikes/youtube-transcript)) |
+| X / Twitter | FxTwitter: full threads, long-form Articles, quoted posts |
+| Stack Exchange | Question + accepted (or top-voted) answer via the official API |
+| GitHub | Repo README, issue/PR description, gist files |
+| PDFs | Links (including arXiv) and files sent in Telegram, via pypdf |
+| Text notes | Written to the graph directly |
 
-## Installation
+Links with nothing worth remembering (profiles, channels, playlists, login walls, bot-challenge pages, empty pages) get a "not supported" reply and are never saved. The fetcher refuses private and internal addresses.
 
-Prereqs: Node.js ≥ 20, a Cloudflare account, a Telegram bot token from @BotFather.
+## Evaluation and findings
+
+Big decisions were settled with a spike or an eval first. The results live next to the design:
+
+- **Extraction model** ([M0](docs/design/v2.md#m0-results-2026-09-11)): entities, facts, false cross-episode links, schema errors, tokens, latency, and idempotency when re-adding an episode, compared for `gpt-4.1-mini` vs. `gpt-5-nano`.
+- **Episode format**: metadata header vs. title + summary, then summary vs. full article text (the full text recovers more facts at ~2.3× the tokens; [spike](spikes/full-article-episode)).
+- **Retrieval** ([search endpoint](docs/design/v3.md#search-endpoint)): relevant and unrelated facts overlap in cosine similarity (0.35–0.46 vs. 0.25–0.41), so no similarity cutoff works. A cross-encoder reranker was tried and rejected as too strict. The calling model judges relevance instead.
+- **Prompting failure worth remembering**: a forceful prompt to strip newsletter sponsor sections invented a connection between a sponsor and a real person, so it never shipped.
+- Every production surprise and its fix is logged in [Problems encountered and fixes](docs/design/v2.md#problems-encountered-and-fixes).
+
+## Tech stack
+
+**LLMs**: OpenAI `gpt-4.1-mini` + `text-embedding-3-small` (graph extraction and search), Gemini `gemini-3.6-flash` (summaries); Groq Whisper planned for speech-to-text.
+**Graph**: Graphiti (temporal knowledge graph: facts carry `valid_at` / `invalid_at`), FalkorDB.
+**Edge**: Cloudflare Workers, Queues, D1 (SQLite), R2, KV; MCP (Streamable HTTP, stateless) with OAuth 2.1, PKCE, and dynamic client registration.
+**Backend**: Python, FastAPI, Playwright, Trafilatura, pypdf on Google Cloud Run (scales to zero, request-based billing).
+**Testing**: Vitest + `@cloudflare/vitest-pool-workers`, pytest.
+
+## Run it locally
+
+Prerequisites: Node.js ≥ 22, Python 3.11, a Cloudflare account, and a bot token from [@BotFather](https://t.me/BotFather).
 
 ```bash
 git clone https://github.com/aayush7511/telegram-knowledge-base.git
-cd telegram-knowledge-base/workers/ingest
-npm install
+cd telegram-knowledge-base
 
-# local dev
-cp .dev.vars.example .dev.vars   # or create .dev.vars with:
-#   TELEGRAM_BOT_TOKEN=...
-#   TELEGRAM_WEBHOOK_SECRET=...   (any random string you invent)
-#   OWNER_CHAT_ID=...             (your numeric Telegram id)
-npx wrangler d1 migrations apply kb-jobs --local
-npm test          # 49 tests: pure logic + workerd integration
-npm run dev       # local server on :8787
+# Workers (run in each of workers/ingest, workers/forward, workers/mcp)
+cd workers/ingest && npm install && npm test
+
+# Orchestrator
+cd ../../services/orchestrator && pip install -r requirements.txt pytest && pytest
 ```
 
-Cloud provisioning, secrets, deploy, and webhook registration: see [workers/ingest/README.md](workers/ingest/README.md).
+Provisioning, secrets, deploys, and webhook registration are covered step by step in each component's README, starting with [workers/ingest](workers/ingest/README.md).
 
-## Features in Progress
+## Roadmap
 
-Everything currently built. All of this is **implemented, tested (111 tests), deployed, and verified live**. Messages flow Telegram → queue → Worker 2 → Cloud Run → knowledge graph, and status updates flow back into D1 — but Cloud Run does no real processing yet.
+| Version | Status | Scope |
+|---|---|---|
+| v1 | ✅ | Ingestion pipeline and blog summaries |
+| v2 | ✅ | Temporal knowledge graph (Graphiti + FalkorDB) |
+| v3 | 🚧 | More sources ✅, MCP connector ✅; Reddit and in-chat questions still to come |
+| v4 | Planned | Voice/video transcription (Whisper), Instagram via a home Pi, a public read-only "brain" page, and remembering what the owner knows, not just what they saved |
+| v5 | Planned | Reliability polish, long-content chunking, raw-media cleanup |
 
-**Worker 1 — `kb-ingest` (Telegram webhook receiver), deployed on workers.dev**
-- Webhook auth: `X-Telegram-Bot-Api-Secret-Token` check, 401 otherwise
-- Single-user allowlist: updates from any chat but `OWNER_CHAT_ID` are silently ACKed
-- Webhook-retry dedup on `(chat_id, message_id)`, state-aware: fully-ingested messages are skipped; partial attempts (inserted but never enqueued) are deleted and reprocessed
-- Content classification: `text` / `voice` (incl. audio files) / `video` (incl. video notes) / `photo` / `document` / `url`; unsupported types get an explanatory reply
-- Layer-1 URL validation by shape: accepts IG `/reel/`, `/reels/`, `/p/`, `/tv/`, YouTube `/watch?v=`, `/shorts/`, `/live/`, `youtu.be`; rejects profiles, channels, playlists, stories, comment permalinks (with a reply listing each rejected URL and why); any other http(s) URL is accepted as `blog`
-- Multi-URL fan-out: one job per accepted URL sharing a generated `group_id`; surrounding prose carried as `caption`; URLs glued together without whitespace are split on scheme boundaries
-- Native media ingestion: 20MB Bot API cap enforced (with size-specific reply), largest photo size selected, bytes streamed from Telegram into R2 at `raw-media/{job_id}.{ext}`, mime→extension mapping
-- Media albums: each item is its own job; Telegram's `media_group_id` passes through as `group_id` (no buffering)
-- D1 `jobs` table: full job row per message with state machine (`received` → `queued`), plus inline content columns (`text`, `url`, `caption`) so every row carries its content or a pointer to it (`r2_key`) — jobs are re-enqueueable from D1 alone
-- Job descriptors enqueued to the `kb-jobs` queue (single `send` or `sendBatch`)
-- Ack UX: 👀 reaction on accepted messages; permanent rejections reply + HTTP 200 (no Telegram retry); transient failures return 500 so Telegram redelivers safely
-- Provisioned infra: `kb-jobs` queue, `kb-raw-media` R2 bucket (2-day expiry lifecycle rule on `raw-media/`), `kb-jobs` D1 database (2 migrations applied), secrets in Wrangler, webhook registered with `allowed_updates=["message"]`
-
-**Worker 2 — `kb-forward` (queue consumer + D1 proxy), deployed on workers.dev**
-- `queue()` consumer on `kb-jobs` (one job at a time: batch 1, concurrency 1; 5 retries, 60s retry delay): POSTs each job descriptor to Cloud Run `/jobs` with shared-secret auth, marks the D1 row `forwarded` on success
-- Per-message ack/retry — a failing job is redelivered without recycling its batch-mates
-- `POST /status` — Cloud Run's only path to D1: `{job_id, state, r2_key?, error?, summary?}`, secret-authed; validates transitions against the pipeline order (forward-only, `saved` terminal, 409 otherwise), COALESCEs `r2_key`/`summary`, 404s unknown jobs
-- 👀 → 👌: when the last job from a Telegram message reaches `saved`, swaps Worker 1's 👀 for 👌 (best-effort)
-- No DLQ by choice: dropped messages stay recoverable because every D1 row carries its content
-- Tests reuse Worker 1's migrations as the single schema truth; Cloud Run is faked in-test
-
-**Cloud Run — `kb-orchestrator` (processing orchestrator), deployed on us-central1**
-- `POST /jobs` intake with `X-KB-Secret` shared-secret auth (401 otherwise); the whole pipeline runs synchronously inside the request (request-based billing, scales to zero, `--max-instances 1`, `--timeout 600`)
-- Blog URLs: Playwright render → Trafilatura text + extruct metadata → cleaned text archived to R2 (`articles/{job_id}.txt`) → Gemini summary → Telegram reply → Graphiti episode (title + summary; URL/site/author as provenance) → FalkorDB
-- Text notes: straight into the graph as an episode, no reply — the 👌 is the acknowledgement
-- Graphiti runs `gpt-4.1-mini` (both slots, temperature 0) + `text-embedding-3-small` on OpenAI's complimentary data-sharing tokens; episodes are keyed by `job_id` so reprocessing never duplicates
-- Status updates to Worker 2 at each stage (`fetching`/`summarizing`/`indexing`/`saved`/`failed`); the `indexing` post carries the episode text so the graph can be rebuilt from D1
-- See [services/orchestrator/README.md](services/orchestrator/README.md)
-
-**FalkorDB — `falkordb` VM (knowledge-graph store), GCE e2-micro in us-central1**
-- FalkorDB in Docker on Container-Optimized OS, data on the persistent stateful partition with append-only persistence; survives reboots
-- Reached by Cloud Run over Direct VPC egress on the internal IP — port 6379 is never open to the internet; password-protected
-- One graph, `second-brain`, holding Episodic nodes, Entity nodes, `MENTIONS` and temporal `RELATES_TO` edges, with range + full-text indexes and stored embeddings for v3 retrieval
-- See [infra/falkordb/README.md](infra/falkordb/README.md)
-
-## Features Not Started
-
-Planned (see [ROADMAP.md](ROADMAP.md)) but with zero code written:
-
-- **Raspberry Pi fetcher** — polls for fetch jobs over outbound HTTPS (no port-forwarding), runs yt-dlp with dedicated-account cookies + `bgutil-ytdlp-pot-provider` for YouTube PO tokens, normalizes audio with ffmpeg, uploads to R2; Layer-2 URL validation (e.g. IG `/p/` posts that turn out to be image-only) with fail/reroute
-- **Groq integration** — Whisper large-v3-turbo transcription (fallback: local faster-whisper distil-large-v3 int8); Llama 3.3 70B summarization/curation; YouTube auto-caption shortcut to skip ASR when quality suffices
-- **Knowledge-graph retrieval** — in-chat questions answered from the graph, a connector for Claude / Claude Code, and the weekly Leiden community recompute (v3)
-- **Pipeline states for media** — `fetching` becomes real once Instagram/YouTube are fetched (v3) and `transcribing` once native media is transcribed (v4); text notes and blog URLs already run the full state machine
-- **Ingestion-complete UX** — final Telegram reply with a short summary of what was captured (or a failure message naming the stage that died)
-- **Raw media cleanup** — explicit R2 delete after graph ingestion (`saved`); today only the 2-day lifecycle rule exists
-- **`job_events` audit table** — append-only per-stage timing/audit trail alongside `jobs`
-- **Long-content handling** — chunked/map-reduce summarization for hour-long videos and large PDFs; size caps with "too big to ingest" messaging
+Goals, non-goals, and user journeys per version: [ROADMAP.md](ROADMAP.md). Design docs: [v2](docs/design/v2.md), [v3](docs/design/v3.md).

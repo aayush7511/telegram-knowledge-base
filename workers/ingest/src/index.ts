@@ -1,3 +1,4 @@
+import { WorkerEntrypoint } from "cloudflare:workers";
 import type { Env, JobDescriptor } from "./types";
 import type { TgUpdate } from "./telegram";
 import { TelegramApiError, downloadFile, sendMessage, setSeenReaction } from "./telegram";
@@ -138,11 +139,19 @@ async function handleUpdate(update: TgUpdate, env: Env, ctx: ExecutionContext): 
     ];
   }
 
-  if (rejected.length > 0) {
-    reply("Skipped (not ingestible):\n" + rejected.map((r) => `• ${r.url} — ${r.reason}`).join("\n"));
-  }
+  if (rejected.length > 0) reply(skippedText(rejected));
   if (jobs.length === 0) return ok(); // everything in the message was rejected
 
+  await enqueueJobs(env, ctx, jobs);
+  return ok();
+}
+
+function skippedText(rejected: RejectedUrl[]): string {
+  return "Skipped (not ingestible):\n" + rejected.map((r) => `• ${r.url} — ${r.reason}`).join("\n");
+}
+
+/** D1 rows first (so every job is rebuildable from D1), then the queue, then 👀 on the message. */
+async function enqueueJobs(env: Env, ctx: ExecutionContext, jobs: JobDescriptor[]): Promise<void> {
   await insertJobs(env.DB, jobs);
   if (jobs.length === 1) {
     await env.JOB_QUEUE.send(jobs[0]);
@@ -151,10 +160,57 @@ async function handleUpdate(update: TgUpdate, env: Env, ctx: ExecutionContext): 
   }
   await markQueued(env.DB, jobs.map((j) => j.job_id), new Date().toISOString());
 
+  const { chat_id, message_id } = jobs[0];
   ctx.waitUntil(
-    setSeenReaction(env.TELEGRAM_BOT_TOKEN, msg.chat.id, msg.message_id).catch((e) =>
-      console.error("reaction failed", e),
-    ),
+    setSeenReaction(env.TELEGRAM_BOT_TOKEN, chat_id, message_id).catch((e) => console.error("reaction failed", e)),
   );
-  return ok();
+}
+
+// An MCP save is announced in the chat, and that bot message stands in for the
+// Telegram message: it keys the jobs, carries the 👀/👌, and gets the summary
+// reply. The prefix fits inside Telegram's 4,096-char message cap with content
+// up to this length.
+export const MAX_SAVE_CHARS = 4000;
+const MAX_CLIENT_NAME_CHARS = 64;
+
+export interface SaveResult {
+  jobs: { job_id: string; url: string | null }[]; // url null → saved as a note
+  rejected: RejectedUrl[];
+}
+
+/**
+ * Called by kb-mcp over a service binding — not reachable from the internet, so
+ * no shared secret. `content` is handled exactly like a Telegram text message:
+ * links fan out through the same Layer-1 rules, anything else is a note.
+ * See docs/design/v3.md#mcp-connector.
+ */
+export class IngestRpc extends WorkerEntrypoint<Env> {
+  async createJobs(content: string, clientName: string): Promise<SaveResult> {
+    const text = content.trim();
+    if (!text) throw new Error("content is empty");
+    if (text.length > MAX_SAVE_CHARS) throw new Error(`content is over ${MAX_SAVE_CHARS} characters`);
+    const client = clientName.trim().slice(0, MAX_CLIENT_NAME_CHARS) || "an MCP client";
+
+    const env = this.env;
+    const echo = await sendMessage(
+      env.TELEGRAM_BOT_TOKEN,
+      Number(env.OWNER_CHAT_ID),
+      `📥 Saving from ${client}:\n${text}`,
+    );
+
+    const { jobs, rejected } = buildTextMessageJobs(
+      { ...echo, text },
+      { now: new Date().toISOString(), makeId: () => crypto.randomUUID() },
+    );
+    if (rejected.length > 0) {
+      this.ctx.waitUntil(
+        sendMessage(env.TELEGRAM_BOT_TOKEN, echo.chat.id, skippedText(rejected), echo.message_id).catch((e) =>
+          console.error("reply failed", e),
+        ),
+      );
+    }
+    if (jobs.length > 0) await enqueueJobs(env, this.ctx, jobs);
+
+    return { jobs: jobs.map((j) => ({ job_id: j.job_id, url: j.url ?? null })), rejected };
+  }
 }

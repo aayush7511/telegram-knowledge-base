@@ -1,0 +1,29 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "kb-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-01",
+  // global_fetch_strictly_public: fetching a client's CIMD document must never
+  // reach a private address (workers-oauth-provider requires it for CIMD).
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "observability": { "enabled": true },
+  // Served only at kb-mcp.aayush7511.workers.dev: the OAuth issuer and resource
+  // are pinned to it (src/index.ts), so per-version preview URLs would only be
+  // an extra way in.
+  "workers_dev": true,
+  "preview_urls": false,
+
+  "vars": {
+    "CLOUD_RUN_URL": "https://kb-orchestrator-135554694779.us-central1.run.app"
+  },
+
+  "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "f38dec050b96458db0efc633e107e575" }],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "kb-jobs",
+      "database_id": "0a2d2a39-fd46-47f3-8918-a3c5f6e2191a"
+    }
+  ],
+  "services": [{ "binding": "INGEST", "service": "kb-ingest", "entrypoint": "IngestRpc" }]
+}
