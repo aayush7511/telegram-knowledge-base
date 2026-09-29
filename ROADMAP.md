@@ -34,7 +34,7 @@ Design decisions: [docs/design/v2.md](docs/design/v2.md)
 
 **Non-Goals**
 - No retrieval of any kind yet — no in-chat questions, no query connector (v3)
-- No weekly global Leiden community recompute (v3)
+- No weekly global Leiden community recompute (v4)
 - Native media is not written to the graph — it isn't transcribed until v4
 - No cross-user graph sharing — the graph remains scoped to the single owner
 - No automatic re-curation of already-ingested items if the policy changes later
@@ -45,7 +45,7 @@ Design decisions: [docs/design/v2.md](docs/design/v2.md)
 3. Bot writes the summary into the knowledge graph as an episode timestamped with when the message was received
 4. The job ends as `saved` in D1, the bot's 👀 on the message changes to 👌, and its entities and relationships are in FalkorDB ready for v3 retrieval
 
-## v3 — Reach, retrieval + public brain
+## v3 — Reach + retrieval
 
 Design decisions: [docs/design/v3.md](docs/design/v3.md)
 
@@ -54,46 +54,50 @@ Design decisions: [docs/design/v3.md](docs/design/v3.md)
 - PDFs are processed, both as links and as files sent in Telegram (text PDFs; scanned ones need OCR)
 - A link to a page with nothing to remember (a profile, a search page, a login wall, an empty or blocked page) gets a "not supported" reply and is never saved
 - `fetching` reflects real work for every URL source, not just blogs
-- The graph is retrievable: questions asked in the chat get answers grounded in past content, and an MCP connector lets Claude Code, Codex, and other MCP clients query the graph and save new things to it
-- **Public brain**: a public, read-only web page where anyone can browse the graph built from what the owner reads and ask it questions, with answers grounded in it and linking back to the source articles
-- Private content (text notes, voice memos) can never reach the public page — which side an item lands on is decided when it's written to the graph, not filtered out when the graph is read
-- Public queries can't exceed the $0 constraint — a hard daily cap turns querying off rather than drawing down credit
-- A weekly global Leiden recompute corrects Graphiti's incremental community drift (design carried over in [docs/design/v2.md](docs/design/v2.md#moved-to-v3))
+- The graph is retrievable: an MCP connector lets Claude Code, Codex, claude.ai, and other MCP clients query the graph and save new things to it, and questions asked in the chat get answers grounded in past content
 
 **Non-Goals**
 - No audio transcription — a video with no captions, and any native voice memo or video, waits for v4
 - The bot doesn't search the web — it ingests the links it's sent
-- Visitors to the public brain can't add content, sign in, or get a graph of their own — it's read-only and fed only by the owner
-- The public brain never serves full article text — facts, entities, and links to the source only
+- No public brain, public/private split, link fan-out, or Leiden recompute — moved to v4 (2026-09-29) to finish the MCP connector first
 
 **User Journey**
 1. User pastes a YouTube link into the Telegram chat
 2. Bot reacts 👀, fetches the video's captions and metadata, summarizes them, and replies with the summary
-3. The summary lands in the public graph and the 👀 changes to 👌
+3. The summary lands in the graph and the 👀 changes to 👌
 4. Later, in Claude Code, the user asks what that video said about agent memory, and the answer comes from the graph
 
-**User Journey (public brain visitor)**
-1. Visitor opens the public brain page and sees the graph of what the owner has been reading, most recent first
-2. Visitor asks "what's been read about agent memory?"
-3. Page answers from the public graph, citing the articles each fact came from, with links
+## v4 — Native media transcription + public brain
 
-## v4 — Native media transcription
+Design carried over from v3: [docs/design/v3.md#moved-to-v4](docs/design/v3.md#moved-to-v4)
 
 **Goals**
 - A voice memo or video sent to the bot gets transcribed and summarized automatically
 - YouTube videos without usable captions get transcribed instead of skipped
 - Instagram posts and reels get fetched (via the home Pi) and transcribed
 - `transcribing` reflects real work
+- Links inside a fetched post (an X post, a Reddit link post) become their own jobs, one level deep
+- **Public brain**: a public, read-only web page where anyone can browse the graph built from what the owner reads and ask it questions, with answers grounded in it and linking back to the source articles
+- Private content (text notes, voice memos) can never reach the public page — which side an item lands on is decided when it's written to the graph, not filtered out when the graph is read
+- Public queries can't exceed the $0 constraint — a hard daily cap turns querying off rather than drawing down credit
+- A weekly global Leiden recompute corrects Graphiti's incremental community drift (design carried over in [docs/design/v2.md](docs/design/v2.md#moved-to-v3))
 
 **Non-Goals**
 - No live/streaming transcription — only complete, already-sent files
 - No non-English or multi-language ASR tuning beyond Whisper's own defaults
+- Visitors to the public brain can't add content, sign in, or get a graph of their own — it's read-only and fed only by the owner
+- The public brain never serves full article text — facts, entities, and links to the source only
 
 **User Journey**
 1. User sends a voice memo to the bot
 2. Bot reacts 👀 to acknowledge receipt
 3. Bot downloads the audio, transcribes it with Whisper, and summarizes the transcript
 4. Bot replies in the same thread with the summary
+
+**User Journey (public brain visitor)**
+1. Visitor opens the public brain page and sees the graph of what the owner has been reading, most recent first
+2. Visitor asks "what's been read about agent memory?"
+3. Page answers from the public graph, citing the articles each fact came from, with links
 
 ## v5 — Reliability + UX polish
 
