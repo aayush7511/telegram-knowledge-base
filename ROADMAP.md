@@ -81,12 +81,14 @@ Design carried over from v3: [docs/design/v3.md#moved-to-v4](docs/design/v3.md#m
 - Private content (text notes, voice memos) can never reach the public page — which side an item lands on is decided when it's written to the graph, not filtered out when the graph is read
 - Public queries can't exceed the $0 constraint — a hard daily cap turns querying off rather than drawing down credit
 - A weekly global Leiden recompute corrects Graphiti's incremental community drift (design carried over in [docs/design/v2.md](docs/design/v2.md#moved-to-v3))
+- **What the owner knows, not just what they saved**: things that come up in conversations with Claude (through the MCP connector) about the owner's relationship to topics and sources — what they've actually read, how well they know a subject, what they're trying to do with it — get saved to the graph, linked to the topics and sources they're about. Retrieval then returns both the sources and the owner's intent and proficiency around them, so answers can meet them where they are. Follows from the v3 finding that a saved source signals *worth keeping*, not *read* (the `kb-memory` skill, [workers/mcp/skill/kb-memory/SKILL.md](workers/mcp/skill/kb-memory/SKILL.md))
 
 **Non-Goals**
 - No live/streaming transcription — only complete, already-sent files
 - No non-English or multi-language ASR tuning beyond Whisper's own defaults
 - Visitors to the public brain can't add content, sign in, or get a graph of their own — it's read-only and fed only by the owner
 - The public brain never serves full article text — facts, entities, and links to the source only
+- What the owner knows about themselves never reaches the public brain — it's the most private content the graph holds
 
 **User Journey**
 1. User sends a voice memo to the bot
@@ -98,6 +100,12 @@ Design carried over from v3: [docs/design/v3.md#moved-to-v4](docs/design/v3.md#m
 1. Visitor opens the public brain page and sees the graph of what the owner has been reading, most recent first
 2. Visitor asks "what's been read about agent memory?"
 3. Page answers from the public graph, citing the articles each fact came from, with links
+
+**User Journey (what the owner knows)**
+1. In Claude, the owner mentions they finished the Transformer paper but still find multi-head attention fuzzy, and want to build an agent with memory
+2. Claude offers to remember that; the owner says yes
+3. The graph now links the owner to the paper (read), to attention (partial understanding), and to agent memory (a goal)
+4. Weeks later, asking "what should I learn next?", Claude finds both the saved sources and that context, and skips re-explaining the paper while going deeper on attention
 
 ## v5 — Reliability + UX polish
 
@@ -129,3 +137,9 @@ Design carried over from v3: [docs/design/v3.md#moved-to-v4](docs/design/v3.md#m
 None open for v2 — M0 settled the Graphiti model (`gpt-4.1-mini` at temperature 0), embeddings, and episode format; see [docs/design/v2.md](docs/design/v2.md#m0-results-2026-09-11).
 
 **v3** — open; tracked in [docs/design/v3.md](docs/design/v3.md#open-questions).
+
+**v4, what the owner knows** — to resolve before building it:
+- **Curation.** Capturing from conversations bends "sending is the curation act". Does Claude propose each item and the owner approves it (like the journey above), or does only an explicit "remember that I…" save anything? Silent automatic capture is the riskiest option: wrong inferences ("finished the paper" from "skimmed the paper") would quietly shape every later answer.
+- **Shape in the graph.** Statements about the owner as their own episodes, with the owner as an entity linked to topic and source entities? Proficiency and goals change, which Graphiti's temporal edges (`valid_at` / `invalid_at`) already model: "fuzzy on attention" should be superseded by "understands attention", not sit beside it.
+- **Tooling.** A dedicated MCP tool (a `remember_about_me`-style write with a clear description of what belongs there) vs. `save_to_memory` with a note; and the `kb-memory` skill updated to both read and propose these.
+- **Privacy.** Always the private side of the public/private split, and part of that design rather than bolted on after.
