@@ -40,6 +40,7 @@ npx -y @mermaid-js/mermaid-cli -i docs/architecture.mmd -o docs/architecture.svg
 
 - `workers/ingest` — Worker 1 (`kb-ingest`): Telegram webhook receiver, TypeScript/Wrangler
 - `workers/forward` — Worker 2 (`kb-forward`): queue consumer, D1 proxy
+- `workers/mcp` — `kb-mcp`: MCP connector (OAuth + Google sign-in, `search_memory` / `save_to_memory`)
 - `services/orchestrator` — Cloud Run (`kb-orchestrator`): Python/FastAPI processing orchestrator
 - `infra/falkordb` — the FalkorDB VM: cloud-init template and runbook (create, verify, query)
 - Each has its own README with local dev / deploy instructions — check the relevant one before working in that component.
