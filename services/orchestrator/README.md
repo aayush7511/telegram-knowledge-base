@@ -192,6 +192,46 @@ the `R2_*` S3 credentials (article archive).
     --format="value(spec.template.spec.containers[0].env.name)"
   ```
 
+### Artifact Registry cleanup (keep 2 images)
+
+Every `--source` deploy pushes a new ~636MB image to the
+`cloud-run-source-deploy` repo (us-central1), and nothing removes the old ones
+— by 2026-09-30 it held 12 images, ~4.8GB (~$0.43/month). A cleanup policy
+keeps the two newest `kb-orchestrator` images (the live one, plus one to fall
+back on if a deploy uploads an image that then fails to start) and deletes
+the rest:
+
+```bash
+cat > cleanup-policy.json <<'EOF'
+[
+  {"name": "delete-everything-not-kept", "action": {"type": "Delete"},
+   "condition": {"tagState": "any"}},
+  {"name": "keep-2-newest-kb-orchestrator", "action": {"type": "Keep"},
+   "mostRecentVersions": {"packageNamePrefixes": ["kb-orchestrator"], "keepCount": 2}}
+]
+EOF
+gcloud artifacts repositories set-cleanup-policies cloud-run-source-deploy \
+  --location us-central1 --policy cleanup-policy.json --no-dry-run
+
+# check what's stored
+gcloud artifacts repositories describe cloud-run-source-deploy \
+  --location us-central1 --format="value(sizeBytes)"
+```
+
+- **Keep beats Delete**, so anything the Keep rule doesn't match is deleted —
+  including any other package pushed into this repo.
+- The policy runs in the background about once a day, so the repo briefly
+  holds 3 images after each deploy.
+- **It doesn't know which image Cloud Run serves.** If you roll traffic back
+  to an older revision, check its digest
+  (`gcloud run revisions describe <revision> --region us-central1 --format="value(status.imageDigest)"`)
+  is one of the two newest before deploying again, or the next cleanup
+  deletes it.
+- **Not $0.** Two Chromium images are ~1.2GB against Artifact Registry's
+  0.5GB free tier — ~$0.07/month, accepted by the owner on 2026-09-30. One
+  image alone (~636MB) is already over; reaching $0 needs the image under
+  500MB and `keepCount: 1`.
+
 ### Model availability
 
 `gemini-2.5-flash` is **closed to new API users** — `generateContent` returns
