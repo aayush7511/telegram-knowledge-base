@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "code-server",
+      "runtimeExecutable": "code-server",
+      "runtimeArgs": ["--bind-addr", "127.0.0.1:8080", "--auth", "none", "--disable-telemetry", "."],
+      "port": 8080
+    }
+  ]
+}
