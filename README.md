@@ -73,7 +73,7 @@ Big decisions were settled with a spike or an eval first. The results live next 
 
 ## Tech stack
 
-**LLMs**: OpenAI `gpt-4.1-mini` + `text-embedding-3-small` (graph extraction and search), Gemini `gemini-3.6-flash` (summaries); Groq Whisper planned for speech-to-text.
+**LLMs**: OpenAI `gpt-4.1-mini` + `text-embedding-3-small` (graph extraction and search), Gemini `gemini-3.6-flash` (summaries); Groq Whisper planned for speech-to-text (v3).
 **Graph**: Graphiti (temporal knowledge graph: facts carry `valid_at` / `invalid_at`), FalkorDB.
 **Edge**: Cloudflare Workers, Queues, D1 (SQLite), R2, KV; MCP (Streamable HTTP, stateless) with OAuth 2.1, PKCE, and dynamic client registration.
 **Backend**: Python, FastAPI, Playwright, Trafilatura, pypdf on Google Cloud Run (scales to zero, request-based billing).
@@ -102,8 +102,8 @@ Provisioning, secrets, deploys, and webhook registration are covered step by ste
 |---|---|---|
 | v1 | ✅ | Ingestion pipeline and blog summaries |
 | v2 | ✅ | Temporal knowledge graph (Graphiti + FalkorDB) |
-| v3 | 🚧 | More sources ✅, MCP connector ✅; Reddit and in-chat questions still to come |
-| v4 | Planned | Voice/video transcription (Whisper), Instagram via a home Pi, a public read-only "brain" page, and remembering what the owner knows, not just what they saved |
+| v3 | 🚧 | More sources ✅, MCP connector ✅; Instagram, voice/video transcription, and 5 friends with their own graphs by the Oct 22 launch |
+| v4 | Planned | A public read-only "brain" page, and remembering what the owner knows, not just what they saved |
 | v5 | Planned | Reliability polish, long-content chunking, raw-media cleanup |
 
 Goals, non-goals, and user journeys per version: [ROADMAP.md](ROADMAP.md). Design docs: [v2](docs/design/v2.md), [v3](docs/design/v3.md).

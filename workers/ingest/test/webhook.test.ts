@@ -28,6 +28,7 @@ interface JobRow {
   r2_key: string | null;
   text: string | null;
   url: string | null;
+  url_source: string | null;
   caption: string | null;
 }
 
@@ -102,6 +103,15 @@ describe("text ingestion", () => {
       new Set(["https://youtu.be/abc123", "https://www.youtube.com/watch?v=def456"]),
     );
     expect(rows.every((r) => r.caption === text && r.text === null)).toBe(true);
+  });
+
+  // specs/youtube-home-worker.md test 18: the row alone can rebuild the queue message
+  it("stores each link's url_source on its D1 row; text notes have none", async () => {
+    await post(update(textMessage("https://youtu.be/zjkBMFhNj_g")));
+    await post(update(textMessage("just a note")));
+    const rows = await allRows();
+    expect(rows.find((r) => r.content_type === "url")!.url_source).toBe("youtube");
+    expect(rows.find((r) => r.content_type === "text")!.url_source).toBeNull();
   });
 
   it("rejects invalid URLs without creating jobs", async () => {

@@ -4,7 +4,11 @@ Queue consumer + status endpoint for the knowledge-base pipeline. Pulls job
 descriptors from the `kb-jobs` queue, POSTs each to the Cloud Run orchestrator
 (push keeps Cloud Run on request-based billing), and marks the D1 row
 `forwarded`. Its `POST /status` endpoint is Cloud Run's only path to D1:
-`{job_id, state, r2_key?, error?, summary?}` with an `X-KB-Secret` header. It
+`{job_id, state, r2_key?, error?, summary?}` with an `X-KB-Secret` header.
+`POST /retry` (`{job_id, delay_seconds}`, same header) puts a job back on
+`kb-jobs` after a delay, rebuilt from its D1 row with `retry_count` bumped —
+Cloud Run asks for it when the YouTube home worker is unreachable
+([spec](../../specs/youtube-home-worker.md)). It
 also owns the 👀 → 👌 swap on the Telegram message once every job from it is
 `saved`. See [CLAUDE.md](../../CLAUDE.md) for the architecture and
 [docs/design/v2.md](../../docs/design/v2.md) for the v2 decisions.
@@ -22,13 +26,15 @@ Deployed: `https://kb-forward.aayush7511.workers.dev` (status endpoint at `/stat
   D1 row keeps full job content (text/url/caption inline, media via r2_key) and
   stays in `queued` — recoverable by a future re-enqueue tool.
 - **States**: this worker writes `forwarded` itself after a successful push.
-  `/status` accepts only `fetching | transcribing | summarizing | indexing |
-  saved | failed` — earlier states belong to Worker 1.
+  `/status` accepts only `fetching | retrying | transcribing | summarizing |
+  indexing | saved | failed` — earlier states belong to Worker 1.
 - **Transitions are validated** (`canTransition` in `src/db.ts`): a job only
   moves forward through the pipeline order (skips are fine — a text note goes
   `forwarded → indexing`), `saved` is terminal, and `failed` can be entered
   from any non-terminal state and left again when a job re-driven from D1
-  starts reporting progress. Anything else is a `409` with
+  starts reporting progress. `retrying` is entered only from `fetching` and
+  left only to `fetching` (the one allowed backward step) or `failed`.
+  Anything else is a `409` with
   `invalid transition <from> -> <to>` and the row is untouched. The UPDATE is a
   compare-and-set on the validated state, so concurrent updates can't both win.
 - `r2_key` and `summary` in a status update use COALESCE: omitted → existing
@@ -73,7 +79,7 @@ npx wrangler deploy      # registers this worker as the kb-jobs consumer
 
 Schema changes ship from Worker 1's migrations. Apply them to the remote D1
 **before** deploying a worker that relies on them (v2's `summary` column is
-migration `0003`):
+migration `0003`; `url_source` and `retry_count` for `/retry` are `0005`):
 
 ```bash
 cd ../ingest && npx wrangler d1 migrations apply kb-jobs --remote

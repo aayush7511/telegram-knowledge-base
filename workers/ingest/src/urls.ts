@@ -82,7 +82,7 @@ const PRIVATE_HOST =
 // Layer-1 validation: reject on URL shape alone — anything that's a profile,
 // feed, listing, search page, or other navigation rather than a single piece of
 // content. IG /p/ is ambiguous (image vs video vs carousel) — accepted here,
-// resolved at fetch time on the Pi (Layer 2). Unrecognized hosts are treated
+// resolved at fetch time by the orchestrator's fetcher (Layer 2). Unrecognized hosts are treated
 // as blogs; the blog pipeline rejects pages with no article text (Layer 2).
 export function checkUrl(raw: string): CheckedUrl {
   let u: URL;

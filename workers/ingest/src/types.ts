@@ -2,7 +2,7 @@ export type ContentType = "text" | "voice" | "photo" | "video" | "document" | "u
 export type UrlSource = "instagram" | "youtube" | "blog" | "x" | "reddit" | "stackexchange" | "github" | "pdf";
 
 export interface JobMedia {
-  r2_key: string | null; // null at enqueue for URL jobs; the Pi fills it in after fetch
+  r2_key: string | null; // null at enqueue for URL jobs; the fetcher fills it in after fetch
   mime_type: string | null;
   size_bytes: number | null;
   duration_seconds: number | null;

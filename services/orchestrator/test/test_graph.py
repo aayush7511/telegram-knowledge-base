@@ -1,4 +1,4 @@
-"""graph.py pure helpers: episode assembly and time parsing (no FalkorDB, no OpenAI)."""
+"""graph.py: episode assembly, time parsing, and what write_episode returns (no FalkorDB, no OpenAI)."""
 from datetime import timezone
 
 import graph
@@ -54,3 +54,36 @@ def test_parse_source_telegram_note_has_no_url():
 
 def test_parse_source_telegram_pdf_file_has_no_url():
     assert graph.parse_source("pdf: Telegram file | site: Telegram") == ("pdf", None)
+
+
+def test_write_episode_returns_entities_and_facts(monkeypatch):
+    """specs/extraction-reply.md: the names and facts Graphiti extracted, in its order."""
+    import asyncio
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    class FakeGraphiti:
+        driver = object()
+
+        async def add_episode(self, **kw):
+            return SimpleNamespace(
+                nodes=[SimpleNamespace(name="Zep"), SimpleNamespace(name="Graphiti")],
+                edges=[SimpleNamespace(fact="Zep built Graphiti."), SimpleNamespace(fact="Graphiti uses FalkorDB.")],
+            )
+
+    async def fake_get_graphiti():
+        return FakeGraphiti()
+
+    async def fake_save(self, driver):
+        pass
+
+    monkeypatch.setattr(graph, "get_graphiti", fake_get_graphiti)
+    monkeypatch.setattr(graph.EpisodicNode, "save", fake_save)
+
+    extracted = asyncio.run(graph.write_episode(
+        "j1", name="T", body="body", source_description="blog: u",
+        reference_time=datetime(2026, 10, 17, tzinfo=timezone.utc),
+    ))
+
+    assert extracted.entities == ["Zep", "Graphiti"]
+    assert extracted.facts == ["Zep built Graphiti.", "Graphiti uses FalkorDB."]

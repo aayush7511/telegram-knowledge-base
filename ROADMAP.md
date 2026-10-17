@@ -45,21 +45,35 @@ Design decisions: [docs/design/v2.md](docs/design/v2.md)
 3. Bot writes the summary into the knowledge graph as an episode timestamped with when the message was received
 4. The job ends as `saved` in D1, the bot's 👀 on the message changes to 👌, and its entities and relationships are in FalkorDB ready for v3 retrieval
 
-## v3 — Reach + retrieval
+## v3 — Reach + retrieval + launch (Thu 2026-10-22)
 
-Design decisions: [docs/design/v3.md](docs/design/v3.md)
+Design decisions: [docs/design/v3.md](docs/design/v3.md) · Schedule: [launch plan](docs/design/v3.md#launch-plan-decided-2026-10-08)
+
+**Who it's for at launch:** people who use Claude every day, save a lot from YouTube, X, and articles, and feel like they forget it. First the owner plus 5 close friends, then a public launch on X and LinkedIn on Oct 22.
 
 **Goals**
-- Links to YouTube, X, Reddit, Stack Overflow, and GitHub get fetched and processed like blog URLs, using the text each source already has (captions, post text, answers) — one pinned tool per source, chosen from [Agent-Reach](https://github.com/Panniantong/Agent-Reach)'s research ([per-source tools](docs/design/v3.md#per-source-tools-mined-from-agent-reach-2026-09-26))
+- When a user asks Claude something, the answer includes what they saved when it's relevant and leaves it out when it isn't. **Ship bar, set 2026-10-08:** on a fixed 30-question test set, the right save comes up in ≥ ~80% of answers and an irrelevant save shows up in < ~10%. If it's not there by Oct 15, launch on Oct 22 anyway and publish the real score ([eval](docs/design/v3.md#retrieval-eval-decided-2026-10-08))
+- Up to 5 friends use it alongside the owner, each with their own graph: their saves never show up in anyone else's search ([friends](docs/design/v3.md#friends-decided-2026-10-08))
+- Every user has a daily save cap, so token cost stays small and bounded
+- Audio gets transcribed (Groq Whisper): voice memos and videos sent to the bot, YouTube videos with no captions, and Instagram reel audio ([transcription](docs/design/v3.md#transcription-decided-2026-10-08)). Moved in from v4 on 2026-10-08
+- `transcribing` reflects real work
+- Links to YouTube, X, Stack Overflow, GitHub, and Instagram get fetched and processed like blog URLs, using the text each source already has (captions, post text, answers) — one pinned tool per source, chosen from [Agent-Reach](https://github.com/Panniantong/Agent-Reach)'s research ([per-source tools](docs/design/v3.md#per-source-tools-mined-from-agent-reach-2026-09-26))
+- YouTube captions are fetched from a home machine, since YouTube blocks Cloud Run, with Supadata as the fallback when it's offline — so the 100 videos/month free plan stops being the limit ([home worker](docs/design/v3.md#youtube-home-worker-decided-2026-10-08))
 - PDFs are processed, both as links and as files sent in Telegram (text PDFs; scanned ones need OCR)
 - A link to a page with nothing to remember (a profile, a search page, a login wall, an empty or blocked page) gets a "not supported" reply and is never saved
 - `fetching` reflects real work for every URL source, not just blogs
-- The graph is retrievable: an MCP connector lets Claude Code, Codex, claude.ai, and other MCP clients query the graph and save new things to it, and questions asked in the chat get answers grounded in past content
+- Long content is written to the graph in 600-token sections, each with the 3 sections before it as context, so extraction covers the whole item instead of about a dozen facts per article
+- The graph is retrievable: an MCP connector lets Claude Code, Codex, claude.ai, and other MCP clients query the graph and save new things to it
 
 **Non-Goals**
-- No audio transcription — a video with no captions, and any native voice memo or video, waits for v4
+- No open sign-up — users are an allowlist the owner edits by hand
+- No synthesizing answers across many saves beyond what Claude does with search results, and no graph features that don't measurably move the eval score
+- No photo understanding (OCR or image captioning) — photos are still stored only
+- No live/streaming transcription — only complete, already-sent files
 - The bot doesn't search the web — it ingests the links it's sent
 - No public brain, public/private split, link fan-out, or Leiden recompute — moved to v4 (2026-09-29) to finish the MCP connector first
+- No in-chat questions — dropped 2026-09-30. Every plain-text message stays a note; the graph is queried through the MCP connector
+- No Reddit — dropped 2026-09-30. New Reddit API apps need manual approval, and every no-login route is blocked
 
 **User Journey**
 1. User pastes a YouTube link into the Telegram chat
@@ -67,16 +81,18 @@ Design decisions: [docs/design/v3.md](docs/design/v3.md)
 3. The summary lands in the graph and the 👀 changes to 👌
 4. Later, in Claude Code, the user asks what that video said about agent memory, and the answer comes from the graph
 
-## v4 — Native media transcription + public brain
+**User Journey (a friend)**
+1. The owner adds the friend to the allowlist; the friend messages the bot and connects the connector in claude.ai with their Google account
+2. The friend sends a voice memo and a reel; the bot transcribes, summarizes, and saves them to the friend's own graph
+3. Three weeks later, the friend asks Claude a question, and the answer brings up the reel they saved
 
-Design carried over from v3: [docs/design/v3.md#moved-to-v4](docs/design/v3.md#moved-to-v4)
+## v4 — Public brain + what the owner knows
+
+Design carried over from v3: [docs/design/v3.md#moved-to-v4](docs/design/v3.md#moved-to-v4). Transcription moved to v3 on 2026-10-08.
 
 **Goals**
-- A voice memo or video sent to the bot gets transcribed and summarized automatically
-- YouTube videos without usable captions get transcribed instead of skipped
-- Instagram posts and reels get fetched (via the home Pi) and transcribed
-- `transcribing` reflects real work
-- Links inside a fetched post (an X post, a Reddit link post) become their own jobs, one level deep
+- A save through the MCP connector is checked live, end to end (moved from v3, 2026-09-30)
+- Links inside a fetched post (e.g. an X post) become their own jobs, one level deep
 - **Public brain**: a public, read-only web page where anyone can browse the graph built from what the owner reads and ask it questions, with answers grounded in it and linking back to the source articles
 - Private content (text notes, voice memos) can never reach the public page — which side an item lands on is decided when it's written to the graph, not filtered out when the graph is read
 - Public queries can't exceed the $0 constraint — a hard daily cap turns querying off rather than drawing down credit
@@ -84,17 +100,10 @@ Design carried over from v3: [docs/design/v3.md#moved-to-v4](docs/design/v3.md#m
 - **What the owner knows, not just what they saved**: things that come up in conversations with Claude (through the MCP connector) about the owner's relationship to topics and sources — what they've actually read, how well they know a subject, what they're trying to do with it — get saved to the graph, linked to the topics and sources they're about. Retrieval then returns both the sources and the owner's intent and proficiency around them, so answers can meet them where they are. Follows from the v3 finding that a saved source signals *worth keeping*, not *read* (the `kb-memory` skill, [workers/mcp/skill/kb-memory/SKILL.md](workers/mcp/skill/kb-memory/SKILL.md))
 
 **Non-Goals**
-- No live/streaming transcription — only complete, already-sent files
 - No non-English or multi-language ASR tuning beyond Whisper's own defaults
 - Visitors to the public brain can't add content, sign in, or get a graph of their own — it's read-only and fed only by the owner
 - The public brain never serves full article text — facts, entities, and links to the source only
 - What the owner knows about themselves never reaches the public brain — it's the most private content the graph holds
-
-**User Journey**
-1. User sends a voice memo to the bot
-2. Bot reacts 👀 to acknowledge receipt
-3. Bot downloads the audio, transcribes it with Whisper, and summarizes the transcript
-4. Bot replies in the same thread with the summary
 
 **User Journey (public brain visitor)**
 1. Visitor opens the public brain page and sees the graph of what the owner has been reading, most recent first
@@ -116,7 +125,7 @@ Design carried over from v3: [docs/design/v3.md#moved-to-v4](docs/design/v3.md#m
 
 **Non-Goals**
 - No new content types beyond what v1–v4 already accept
-- No user-facing settings/configuration UI — still a single hardcoded owner and pipeline
+- No user-facing settings/configuration UI — users are still a hand-edited allowlist
 
 **User Journey**
 1. User sends a long video well beyond normal length

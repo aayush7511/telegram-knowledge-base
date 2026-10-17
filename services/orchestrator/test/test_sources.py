@@ -92,7 +92,7 @@ def _supadata(monkeypatch, handler, key="test-key"):
 
 def test_supadata_native_captions(monkeypatch):
     reqs = _supadata(monkeypatch, lambda req: httpx.Response(200, json={"content": "hi everyone", "lang": "en"}))
-    assert run(sources._youtube_transcript("zjkBMFhNj_g")) == "hi everyone"
+    assert run(sources._supadata_transcript("zjkBMFhNj_g")) == "hi everyone"
     [req] = reqs
     assert req.headers["x-api-key"] == "test-key"
     # native only — auto/generate would bill 2 credits per minute of audio
@@ -107,7 +107,7 @@ def test_supadata_long_video_polls_the_job(monkeypatch):
         httpx.Response(200, json={"status": "completed", "content": [{"text": "part one"}, {"text": "part two"}]}),
     ])
     reqs = _supadata(monkeypatch, lambda req: next(replies))
-    assert run(sources._youtube_transcript("zjkBMFhNj_g")) == "part one part two"
+    assert run(sources._supadata_transcript("zjkBMFhNj_g")) == "part one part two"
     assert [r.url.path for r in reqs] == ["/v1/transcript", "/v1/transcript/job-1", "/v1/transcript/job-1"]
 
 
@@ -119,32 +119,32 @@ def test_supadata_long_video_polls_the_job(monkeypatch):
 def test_supadata_not_supported_cases(monkeypatch, status, reason):
     _supadata(monkeypatch, lambda req: httpx.Response(status, json={"error": "x"}))
     with pytest.raises(sources.NotSupported, match=reason):
-        run(sources._youtube_transcript("zjkBMFhNj_g"))
+        run(sources._supadata_transcript("zjkBMFhNj_g"))
 
 
 def test_supadata_bad_key_is_an_ordinary_failure(monkeypatch):
     _supadata(monkeypatch, lambda req: httpx.Response(401, json={"error": "unauthorized"}))
     with pytest.raises(httpx.HTTPStatusError):
-        run(sources._youtube_transcript("zjkBMFhNj_g"))
+        run(sources._supadata_transcript("zjkBMFhNj_g"))
 
 
 def test_supadata_failed_job_and_timeout(monkeypatch):
     replies = iter([httpx.Response(202, json={"jobId": "j"}), httpx.Response(200, json={"status": "failed", "error": "boom"})])
     _supadata(monkeypatch, lambda req: next(replies))
     with pytest.raises(RuntimeError, match="boom"):
-        run(sources._youtube_transcript("zjkBMFhNj_g"))
+        run(sources._supadata_transcript("zjkBMFhNj_g"))
 
     monkeypatch.setattr(sources, "YOUTUBE_TIMEOUT_S", 9)  # 3 polls at SUPADATA_POLL_S=3
     _supadata(monkeypatch, lambda req: httpx.Response(202, json={"jobId": "j"}) if req.url.path.endswith("transcript")
               else httpx.Response(200, json={"status": "queued"}))
     with pytest.raises(TimeoutError):
-        run(sources._youtube_transcript("zjkBMFhNj_g"))
+        run(sources._supadata_transcript("zjkBMFhNj_g"))
 
 
 def test_youtube_without_a_supadata_key_is_not_supported(monkeypatch):
     _supadata(monkeypatch, lambda req: httpx.Response(500), key=None)
     with pytest.raises(sources.NotSupported, match="aren't set up yet"):
-        run(sources._youtube_transcript("zjkBMFhNj_g"))
+        run(sources._supadata_transcript("zjkBMFhNj_g"))
 
 
 # --- X ---------------------------------------------------------------------

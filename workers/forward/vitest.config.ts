@@ -7,11 +7,15 @@ import { Response as MiniflareResponse, type Request as MiniflareRequest } from 
 // traffic is blocked so tests can never hit the real network.
 //
 // Cloud Run: job ids containing "boom" get a 500 to exercise the retry path.
+// Every accepted /jobs body is recorded and served back on
+// GET https://fake-cloud-run.test/__jobs (DELETE clears), so a test can see
+// what a re-enqueued message carried once the queue delivered it.
 // Telegram: every Bot API call is recorded and served back on
 // GET https://api.telegram.org/__reactions (DELETE clears), so a test can see
 // whether the worker actually sent the 👌. Chat id 666 gets a Telegram error to
 // exercise the best-effort path.
 const telegramCalls: unknown[] = [];
+const cloudRunJobs: unknown[] = [];
 
 function fakeOutbound(request: MiniflareRequest): Promise<MiniflareResponse> | MiniflareResponse {
   const url = new URL(request.url);
@@ -32,6 +36,10 @@ function fakeOutbound(request: MiniflareRequest): Promise<MiniflareResponse> | M
   if (url.hostname !== "fake-cloud-run.test") {
     return new MiniflareResponse("net connect disabled in tests", { status: 502 });
   }
+  if (url.pathname === "/__jobs") {
+    if (request.method === "DELETE") cloudRunJobs.length = 0;
+    return MiniflareResponse.json(cloudRunJobs);
+  }
   if (url.pathname !== "/jobs" || request.method !== "POST") {
     return new MiniflareResponse("not found", { status: 404 });
   }
@@ -43,6 +51,7 @@ function fakeOutbound(request: MiniflareRequest): Promise<MiniflareResponse> | M
     if (job.job_id?.includes("boom")) {
       return new MiniflareResponse("stub exploded", { status: 500 });
     }
+    cloudRunJobs.push(job);
     return MiniflareResponse.json({ accepted: true, job_id: job.job_id });
   })();
 }

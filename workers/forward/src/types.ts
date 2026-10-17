@@ -5,7 +5,7 @@ export type ContentType = "text" | "voice" | "photo" | "video" | "document" | "u
 export type UrlSource = "instagram" | "youtube" | "blog" | "x" | "reddit" | "stackexchange" | "github" | "pdf";
 
 export interface JobMedia {
-  r2_key: string | null; // null at enqueue for URL jobs; the Pi fills it in after fetch
+  r2_key: string | null; // null at enqueue for URL jobs; the fetcher fills it in after fetch
   mime_type: string | null;
   size_bytes: number | null;
   duration_seconds: number | null;
@@ -23,6 +23,7 @@ export interface JobDescriptor {
   url_source?: UrlSource;
   media?: JobMedia; // binary types only — bytes are already in R2 before enqueue
   caption?: string; // media caption, or surrounding text for fanned-out URL jobs
+  retry_count?: number; // retries scheduled so far — set on messages rebuilt by /retry; missing = 0
 }
 
 // States Cloud Run may report via POST /status. Earlier states belong to
@@ -30,6 +31,7 @@ export interface JobDescriptor {
 // after a successful push — never accepted from outside.
 export const REPORTABLE_STATES = [
   "fetching",
+  "retrying",
   "transcribing",
   "summarizing",
   "indexing",
@@ -46,8 +48,14 @@ export interface StatusUpdate {
   summary?: string | null; // sent with `indexing` for blog jobs: the graph episode text
 }
 
+export interface RetryRequest {
+  job_id: string;
+  delay_seconds: number;
+}
+
 export interface Env {
   DB: D1Database;
+  JOB_QUEUE: Queue<JobDescriptor>;
   CLOUD_RUN_URL: string;
   CLOUD_RUN_SECRET: string;
   WORKER2_SHARED_SECRET: string;

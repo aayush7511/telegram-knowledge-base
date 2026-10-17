@@ -1,0 +1,5 @@
+[
+  {"name": "delete-everything-not-kept", "action": {"type": "Delete"}, "condition": {"tagState": "any"}},
+  {"name": "keep-2-newest-kb-orchestrator", "action": {"type": "Keep"},
+   "mostRecentVersions": {"packageNamePrefixes": ["kb-orchestrator"], "keepCount": 2}}
+]

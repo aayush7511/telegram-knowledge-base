@@ -55,13 +55,17 @@ async def fetch_blog(url: str) -> ResponseObject:
     return ro
 
 
-# --- YouTube: captions via Supadata + title/channel (oEmbed) ---------------
+# --- YouTube: captions from the home worker, Supadata when blocked ---------
 # YouTube blocks Cloud Run's IPs and free datacenter proxies
-# (spikes/youtube-transcript), so captions come from Supadata, which fetches
-# them on its side. mode=native only: the video's existing captions, 1 credit
-# per video (free plan: 100/month, no card). Never auto/generate — those
-# transcribe the audio at 2 credits per *minute*, so one long video would drain
-# the month. Long videos come back as an async job, polled within the request.
+# (spikes/youtube-transcript), so English captions come from a worker on the
+# owner's Mac (services/yt-worker), reached through Tailscale Funnel with its
+# own secret. Only when YouTube blocks that home IP too does Supadata fetch
+# them on its side. Spec: ../../specs/youtube-home-worker.md.
+#
+# Supadata: mode=native only — the video's existing captions, 1 credit per
+# video (free plan: 100/month, no card). Never auto/generate — those transcribe
+# the audio at 2 credits per *minute*, so one long video would drain the month.
+# Long videos come back as an async job, polled within the request.
 
 _SUPADATA = "https://api.supadata.ai/v1/"
 YOUTUBE_TIMEOUT_S = 240
@@ -100,7 +104,50 @@ def _supadata_text(data: dict) -> str:
     return content if isinstance(content, str) else " ".join(c.get("text", "") for c in content)
 
 
+YT_WORKER_TIMEOUT_S = 30
+# Replies for the home-worker outcomes, in the user's words (the spec).
+NO_CAPTIONS_REPLY = "No captions"
+UNAVAILABLE_REPLY = "Unavailable at the moment"
+SOME_ERROR_REPLY = "There was some error"
+
+
+class WorkerUnreachable(Exception):
+    """The home worker didn't answer (Mac asleep/offline, crash, timeout) — the job is retried later."""
+
+
 async def _youtube_transcript(video_id: str) -> str:
+    """English captions from the home worker; Supadata only when YouTube blocks it."""
+    worker_url = os.environ.get("YT_WORKER_URL")
+    if not worker_url:  # a setup mistake, not a reason to spend Supadata credit
+        raise NotSupported(SOME_ERROR_REPLY)
+    try:
+        async with httpx.AsyncClient(timeout=YT_WORKER_TIMEOUT_S) as client:
+            resp = await client.post(
+                worker_url.rstrip("/") + "/transcript",
+                json={"video_id": video_id},
+                headers={"X-KB-Secret": os.environ.get("YT_WORKER_SECRET", "")},
+            )
+    except httpx.HTTPError as exc:
+        raise WorkerUnreachable(f"home worker: {exc!r}") from exc
+    if resp.status_code == 401:
+        raise NotSupported(SOME_ERROR_REPLY)
+    if resp.status_code != 200:  # e.g. Funnel's 502 when the worker is down, or a 500 from a crash
+        raise WorkerUnreachable(f"home worker: HTTP {resp.status_code}")
+
+    data = resp.json()
+    status = data.get("status")
+    if status == "ok":
+        return data["text"]
+    if status == "no_captions":
+        raise NotSupported(NO_CAPTIONS_REPLY)
+    if status == "unavailable":
+        raise NotSupported(UNAVAILABLE_REPLY)
+    if status == "blocked":
+        return await _supadata_transcript(video_id)
+    raise RuntimeError(f"home worker: unexpected status {status!r}")
+
+
+async def _supadata_transcript(video_id: str) -> str:
     key = os.environ.get("SUPADATA_API_KEY")
     if not key:
         raise NotSupported("YouTube transcripts aren't set up yet")

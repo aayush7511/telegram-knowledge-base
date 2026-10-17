@@ -1,0 +1,4 @@
+fastapi
+uvicorn
+# Pinned: the version the spike verified from a home IP (spikes/youtube-transcript).
+youtube-transcript-api==1.2.4

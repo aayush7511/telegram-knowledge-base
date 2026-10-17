@@ -14,15 +14,30 @@ export function textJob(job_id: string, overrides: Partial<JobDescriptor> = {}):
   };
 }
 
+export function youtubeJob(job_id: string, overrides: Partial<JobDescriptor> = {}): JobDescriptor {
+  return {
+    job_id,
+    group_id: null,
+    chat_id: 12345,
+    message_id: 2,
+    time_received: "2026-10-10T15:00:00.000Z",
+    content_type: "url",
+    url: "https://youtu.be/zjkBMFhNj_g",
+    url_source: "youtube",
+    ...overrides,
+  };
+}
+
 // Seed a D1 row the way Worker 1 leaves it after enqueue (state=queued).
 export async function seedJob(
   job: JobDescriptor,
   state = "queued",
   r2_key: string | null = null,
+  retry_count = 0,
 ): Promise<void> {
   await env.DB.prepare(
-    "INSERT INTO jobs (job_id, chat_id, message_id, group_id, content_type, state, r2_key, text, url, caption, created_at, updated_at) " +
-      "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)",
+    "INSERT INTO jobs (job_id, chat_id, message_id, group_id, content_type, state, r2_key, text, url, url_source, caption, retry_count, created_at, updated_at) " +
+      "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)",
   )
     .bind(
       job.job_id,
@@ -34,7 +49,9 @@ export async function seedJob(
       r2_key ?? job.media?.r2_key ?? null,
       job.text ?? null,
       job.url ?? null,
+      job.url_source ?? null,
       job.caption ?? null,
+      retry_count,
       job.time_received,
     )
     .run();
@@ -46,11 +63,12 @@ export interface JobRow {
   r2_key: string | null;
   error: string | null;
   summary: string | null;
+  retry_count: number;
   updated_at: string;
 }
 
 export async function getRow(job_id: string): Promise<JobRow | null> {
-  return env.DB.prepare("SELECT job_id, state, r2_key, error, summary, updated_at FROM jobs WHERE job_id = ?1")
+  return env.DB.prepare("SELECT job_id, state, r2_key, error, summary, retry_count, updated_at FROM jobs WHERE job_id = ?1")
     .bind(job_id)
     .first<JobRow>();
 }

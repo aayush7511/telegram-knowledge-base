@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from graphiti_core import Graphiti
@@ -48,6 +49,14 @@ LLM_MODEL = "gpt-4.1-mini-2025-04-14"
 EMBEDDING_MODEL = "text-embedding-3-small"
 
 _graphiti: Graphiti | None = None
+
+
+@dataclass
+class Extracted:
+    """What one episode put into the graph, in Graphiti's order (specs/extraction-reply.md)."""
+
+    entities: list[str]  # EntityNode.name
+    facts: list[str]  # EntityEdge.fact
 
 
 async def get_graphiti() -> Graphiti:
@@ -103,8 +112,9 @@ async def write_episode(
     body: str,
     source_description: str,
     reference_time: datetime,
-) -> None:
-    """Upsert the Episodic node keyed by job_id, then let Graphiti extract from it."""
+) -> Extracted:
+    """Upsert the Episodic node keyed by job_id, let Graphiti extract from it, and
+    return the entities and facts it extracted."""
     graphiti = await get_graphiti()
     await EpisodicNode(
         uuid=job_id,
@@ -129,6 +139,7 @@ async def write_episode(
     log.info(
         "graph write: job_id=%s entities=%d facts=%d", job_id, len(result.nodes), len(result.edges)
     )
+    return Extracted(entities=[n.name for n in result.nodes], facts=[e.fact for e in result.edges])
 
 
 def parse_source(source_description: str) -> tuple[str, str | None]:
