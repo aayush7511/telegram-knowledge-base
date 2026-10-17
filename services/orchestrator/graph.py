@@ -56,7 +56,8 @@ class Extracted:
     """What one episode put into the graph, in Graphiti's order (specs/extraction-reply.md)."""
 
     entities: list[str]  # EntityNode.name
-    facts: list[str]  # EntityEdge.fact
+    facts: list[str]  # EntityEdge.fact, linked to this episode (new or confirmed)
+    outdated: list[str]  # EntityEdge.fact, older facts this episode invalidated
 
 
 async def get_graphiti() -> Graphiti:
@@ -139,7 +140,17 @@ async def write_episode(
     log.info(
         "graph write: job_id=%s entities=%d facts=%d", job_id, len(result.nodes), len(result.edges)
     )
-    return Extracted(entities=[n.name for n in result.nodes], facts=[e.fact for e in result.edges])
+    # result.edges also holds the older facts this episode invalidated. Graphiti
+    # adds the episode's uuid to every edge it produced or confirmed, never to
+    # one it invalidated, so that tells them apart. Not `invalid_at`: a new fact
+    # can carry an end date of its own ("lived in Ohio until 2020").
+    ours = [e for e in result.edges if job_id in (e.episodes or [])]
+    outdated = [e for e in result.edges if job_id not in (e.episodes or [])]
+    return Extracted(
+        entities=[n.name for n in result.nodes],
+        facts=[e.fact for e in ours],
+        outdated=[e.fact for e in outdated],
+    )
 
 
 def parse_source(source_description: str) -> tuple[str, str | None]:

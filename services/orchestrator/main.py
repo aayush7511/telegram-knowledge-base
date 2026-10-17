@@ -309,7 +309,7 @@ async def reply_saved(job: dict, ro: ResponseObject | None, extracted: graph.Ext
     """Reply with what went into memory. Best-effort: a formatting or send error
     is logged and the job still ends `saved` (the graph write already happened)."""
     try:
-        text = telegram.format_extraction_reply(ro, extracted.entities, extracted.facts)
+        text = telegram.format_extraction_reply(ro, extracted.entities, extracted.facts, extracted.outdated)
     except Exception:
         log.exception("extraction reply not built: job_id=%s", job["job_id"])
         return
