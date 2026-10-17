@@ -12,6 +12,8 @@
   },
 
   "queues": {
+    // Producer for /retry: a YouTube job is put back on its own queue with a delay.
+    "producers": [{ "binding": "JOB_QUEUE", "queue": "kb-jobs" }],
     "consumers": [
       {
         "queue": "kb-jobs",

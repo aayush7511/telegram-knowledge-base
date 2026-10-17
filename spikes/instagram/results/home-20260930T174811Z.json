@@ -1,0 +1,546 @@
+[
+  {
+    "url": "https://www.instagram.com/p/C9GAp84SPWW/",
+    "type": "post",
+    "yt-dlp": {
+      "ok": true,
+      "caption_chars": 8,
+      "media": 1,
+      "kind": "video",
+      "secs": 1.51
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 8,
+      "media": 1,
+      "kind": "video",
+      "secs": 4.93
+    },
+    "gallery-dl": {
+      "ok": false,
+      "error": "RuntimeError: {\"error\": \"AbortExtraction\", \"message\": \"HTTP redirect to login page (https://www.instagram.com/accounts/login/)\"}",
+      "secs": 0.73
+    },
+    "chain": {
+      "ok": true,
+      "winner": "yt-dlp",
+      "secs": 1.51
+    }
+  },
+  {
+    "url": "https://www.instagram.com/p/DJjZATXyi2W/",
+    "type": "post",
+    "yt-dlp": {
+      "ok": true,
+      "caption_chars": 155,
+      "media": 1,
+      "kind": "video",
+      "secs": 1.46
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 155,
+      "media": 1,
+      "kind": "video",
+      "secs": 5.75
+    },
+    "gallery-dl": {
+      "ok": false,
+      "error": "RuntimeError: {\"error\": \"AbortExtraction\", \"message\": \"HTTP redirect to login page (https://www.instagram.com/accounts/login/)\"}",
+      "secs": 0.8
+    },
+    "chain": {
+      "ok": true,
+      "winner": "yt-dlp",
+      "secs": 1.46
+    }
+  },
+  {
+    "url": "https://www.instagram.com/p/DQ3zR6-DPGm/",
+    "type": "post",
+    "yt-dlp": {
+      "ok": false,
+      "error": "DownloadError: ERROR: [Instagram] DQ3zRtyjGi6: No video formats found!; please report this issue on  https://github.com/yt-dlp/yt-dlp/issues?q= , filling out the appropriate issue template. Confirm yo",
+      "secs": 1.62
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 261,
+      "media": 6,
+      "kind": "carousel",
+      "secs": 1.04
+    },
+    "gallery-dl": {
+      "ok": false,
+      "error": "RuntimeError: {\"error\": \"AbortExtraction\", \"message\": \"HTTP redirect to login page (https://www.instagram.com/accounts/login/)\"}",
+      "secs": 0.63
+    },
+    "chain": {
+      "ok": true,
+      "winner": "instaloader",
+      "secs": 2.66
+    }
+  },
+  {
+    "url": "https://www.instagram.com/p/DRPzD6oCLFZ/",
+    "type": "post",
+    "yt-dlp": {
+      "ok": false,
+      "error": "DownloadError: ERROR: [Instagram] DRPzDodCNMj: No video formats found!; please report this issue on  https://github.com/yt-dlp/yt-dlp/issues?q= , filling out the appropriate issue template. Confirm yo",
+      "secs": 1.73
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 312,
+      "media": 3,
+      "kind": "carousel",
+      "secs": 1.67
+    },
+    "gallery-dl": {
+      "ok": false,
+      "error": "RuntimeError: {\"error\": \"AbortExtraction\", \"message\": \"HTTP redirect to login page (https://www.instagram.com/accounts/login/)\"}",
+      "secs": 0.63
+    },
+    "chain": {
+      "ok": true,
+      "winner": "instaloader",
+      "secs": 3.4
+    }
+  },
+  {
+    "url": "https://www.instagram.com/p/DUNGKnBCSdC/",
+    "type": "post",
+    "yt-dlp": {
+      "ok": true,
+      "caption_chars": 28,
+      "media": 1,
+      "kind": "video",
+      "secs": 2.72
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 28,
+      "media": 1,
+      "kind": "video",
+      "secs": 4.61
+    },
+    "gallery-dl": {
+      "ok": false,
+      "error": "RuntimeError: {\"error\": \"AbortExtraction\", \"message\": \"HTTP redirect to login page (https://www.instagram.com/accounts/login/)\"}",
+      "secs": 0.64
+    },
+    "chain": {
+      "ok": true,
+      "winner": "yt-dlp",
+      "secs": 2.72
+    }
+  },
+  {
+    "url": "https://www.instagram.com/p/DVOOZXek3sl/",
+    "type": "post",
+    "yt-dlp": {
+      "ok": false,
+      "error": "DownloadError: ERROR: [Instagram] DVOOZGLEytY: No video formats found!; please report this issue on  https://github.com/yt-dlp/yt-dlp/issues?q= , filling out the appropriate issue template. Confirm yo",
+      "secs": 1.43
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 1207,
+      "media": 8,
+      "kind": "carousel",
+      "secs": 8.48
+    },
+    "gallery-dl": {
+      "ok": false,
+      "error": "RuntimeError: {\"error\": \"AbortExtraction\", \"message\": \"HTTP redirect to login page (https://www.instagram.com/accounts/login/)\"}",
+      "secs": 0.75
+    },
+    "chain": {
+      "ok": true,
+      "winner": "instaloader",
+      "secs": 9.91
+    }
+  },
+  {
+    "url": "https://www.instagram.com/p/DaU7f-CjE1c/",
+    "type": "post",
+    "yt-dlp": {
+      "ok": false,
+      "error": "DownloadError: ERROR: [Instagram] DaU7UTFM2EB: No video formats found!; please report this issue on  https://github.com/yt-dlp/yt-dlp/issues?q= , filling out the appropriate issue template. Confirm yo",
+      "secs": 3.01
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 218,
+      "media": 3,
+      "kind": "carousel",
+      "secs": 2.96
+    },
+    "gallery-dl": {
+      "ok": false,
+      "error": "RuntimeError: {\"error\": \"AbortExtraction\", \"message\": \"HTTP redirect to login page (https://www.instagram.com/accounts/login/)\"}",
+      "secs": 0.84
+    },
+    "chain": {
+      "ok": true,
+      "winner": "instaloader",
+      "secs": 5.97
+    }
+  },
+  {
+    "url": "https://www.instagram.com/p/Db6URBZAWgg/",
+    "type": "post",
+    "yt-dlp": {
+      "ok": false,
+      "error": "DownloadError: ERROR: [Instagram] Db6URBZAWgg: There is no video in this post",
+      "secs": 1.93
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 4,
+      "media": 1,
+      "kind": "image",
+      "secs": 0.91
+    },
+    "gallery-dl": {
+      "ok": false,
+      "error": "RuntimeError: {\"error\": \"AbortExtraction\", \"message\": \"HTTP redirect to login page (https://www.instagram.com/accounts/login/)\"}",
+      "secs": 0.99
+    },
+    "chain": {
+      "ok": true,
+      "winner": "instaloader",
+      "secs": 2.84
+    }
+  },
+  {
+    "url": "https://www.instagram.com/p/Be3rTNplCHf/",
+    "type": "post",
+    "yt-dlp": {
+      "ok": false,
+      "error": "DownloadError: ERROR: [Instagram] Be3rTNplCHf: There is no video in this post",
+      "secs": 1.83
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 17,
+      "media": 1,
+      "kind": "image",
+      "secs": 1.46
+    },
+    "gallery-dl": {
+      "ok": false,
+      "error": "RuntimeError: {\"error\": \"AbortExtraction\", \"message\": \"HTTP redirect to login page (https://www.instagram.com/accounts/login/)\"}",
+      "secs": 0.71
+    },
+    "chain": {
+      "ok": true,
+      "winner": "instaloader",
+      "secs": 3.29
+    }
+  },
+  {
+    "url": "https://www.instagram.com/p/BsOGulcndj-/",
+    "type": "post",
+    "yt-dlp": {
+      "ok": false,
+      "error": "DownloadError: ERROR: [Instagram] BsOGulcndj-: There is no video in this post",
+      "secs": 1.28
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 192,
+      "media": 1,
+      "kind": "image",
+      "secs": 1.45
+    },
+    "gallery-dl": {
+      "ok": false,
+      "error": "RuntimeError: {\"error\": \"AbortExtraction\", \"message\": \"HTTP redirect to login page (https://www.instagram.com/accounts/login/)\"}",
+      "secs": 0.66
+    },
+    "chain": {
+      "ok": true,
+      "winner": "instaloader",
+      "secs": 2.73
+    }
+  },
+  {
+    "url": "https://www.instagram.com/reel/C8CaBfWs1mr/",
+    "type": "reel",
+    "yt-dlp": {
+      "ok": true,
+      "caption_chars": 112,
+      "media": 1,
+      "kind": "video",
+      "secs": 2.36
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 112,
+      "media": 1,
+      "kind": "video",
+      "secs": 7.3
+    },
+    "gallery-dl": {
+      "ok": false,
+      "error": "RuntimeError: {\"error\": \"AbortExtraction\", \"message\": \"HTTP redirect to login page (https://www.instagram.com/accounts/login/)\"}",
+      "secs": 0.87
+    },
+    "chain": {
+      "ok": true,
+      "winner": "yt-dlp",
+      "secs": 2.36
+    }
+  },
+  {
+    "url": "https://www.instagram.com/reel/DGyFM8jq-va/",
+    "type": "reel",
+    "yt-dlp": {
+      "ok": true,
+      "caption_chars": 135,
+      "media": 1,
+      "kind": "video",
+      "secs": 1.42
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 135,
+      "media": 1,
+      "kind": "video",
+      "secs": 4.27
+    },
+    "gallery-dl": {
+      "ok": false,
+      "error": "RuntimeError: {\"error\": \"AbortExtraction\", \"message\": \"HTTP redirect to login page (https://www.instagram.com/accounts/login/)\"}",
+      "secs": 0.61
+    },
+    "chain": {
+      "ok": true,
+      "winner": "yt-dlp",
+      "secs": 1.42
+    }
+  },
+  {
+    "url": "https://www.instagram.com/reel/DKcalTzoftf/",
+    "type": "reel",
+    "yt-dlp": {
+      "ok": true,
+      "caption_chars": 56,
+      "media": 1,
+      "kind": "video",
+      "secs": 2.11
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 56,
+      "media": 1,
+      "kind": "video",
+      "secs": 8.16
+    },
+    "gallery-dl": {
+      "ok": false,
+      "error": "RuntimeError: {\"error\": \"AbortExtraction\", \"message\": \"HTTP redirect to login page (https://www.instagram.com/accounts/login/)\"}",
+      "secs": 0.71
+    },
+    "chain": {
+      "ok": true,
+      "winner": "yt-dlp",
+      "secs": 2.11
+    }
+  },
+  {
+    "url": "https://www.instagram.com/reel/DMmxU4bKcsR/",
+    "type": "reel",
+    "yt-dlp": {
+      "ok": true,
+      "caption_chars": 34,
+      "media": 1,
+      "kind": "video",
+      "secs": 1.66
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 34,
+      "media": 1,
+      "kind": "video",
+      "secs": 21.16
+    },
+    "gallery-dl": {
+      "ok": false,
+      "error": "RuntimeError: {\"error\": \"AbortExtraction\", \"message\": \"HTTP redirect to login page (https://www.instagram.com/accounts/login/)\"}",
+      "secs": 0.76
+    },
+    "chain": {
+      "ok": true,
+      "winner": "yt-dlp",
+      "secs": 1.66
+    }
+  },
+  {
+    "url": "https://www.instagram.com/reel/DOuM2pFiEsz/",
+    "type": "reel",
+    "yt-dlp": {
+      "ok": false,
+      "error": "DownloadError: ERROR: [Instagram] DOuM2pFiEsz: There is no video in this post",
+      "secs": 1.47
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 293,
+      "media": 1,
+      "kind": "image",
+      "secs": 2.11
+    },
+    "gallery-dl": {
+      "ok": false,
+      "error": "RuntimeError: {\"error\": \"AbortExtraction\", \"message\": \"HTTP redirect to login page (https://www.instagram.com/accounts/login/)\"}",
+      "secs": 0.73
+    },
+    "chain": {
+      "ok": true,
+      "winner": "instaloader",
+      "secs": 3.58
+    }
+  },
+  {
+    "url": "https://www.instagram.com/reel/DPd8KODDA4d/",
+    "type": "reel",
+    "yt-dlp": {
+      "ok": true,
+      "caption_chars": 27,
+      "media": 1,
+      "kind": "video",
+      "secs": 1.65
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 27,
+      "media": 1,
+      "kind": "video",
+      "secs": 4.98
+    },
+    "gallery-dl": {
+      "ok": false,
+      "error": "RuntimeError: {\"error\": \"AbortExtraction\", \"message\": \"HTTP redirect to login page (https://www.instagram.com/accounts/login/)\"}",
+      "secs": 0.6
+    },
+    "chain": {
+      "ok": true,
+      "winner": "yt-dlp",
+      "secs": 1.65
+    }
+  },
+  {
+    "url": "https://www.instagram.com/reel/DQCkNLtgqEe/",
+    "type": "reel",
+    "yt-dlp": {
+      "ok": true,
+      "caption_chars": 130,
+      "media": 1,
+      "kind": "video",
+      "secs": 1.48
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 130,
+      "media": 1,
+      "kind": "video",
+      "secs": 7.13
+    },
+    "gallery-dl": {
+      "ok": false,
+      "error": "RuntimeError: {\"error\": \"AbortExtraction\", \"message\": \"HTTP redirect to login page (https://www.instagram.com/accounts/login/)\"}",
+      "secs": 0.78
+    },
+    "chain": {
+      "ok": true,
+      "winner": "yt-dlp",
+      "secs": 1.48
+    }
+  },
+  {
+    "url": "https://www.instagram.com/reel/DZaO__gO0rz/",
+    "type": "reel",
+    "yt-dlp": {
+      "ok": true,
+      "caption_chars": 560,
+      "media": 1,
+      "kind": "video",
+      "secs": 1.65
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 560,
+      "media": 1,
+      "kind": "video",
+      "secs": 8.62
+    },
+    "gallery-dl": {
+      "ok": false,
+      "error": "RuntimeError: {\"error\": \"AbortExtraction\", \"message\": \"HTTP redirect to login page (https://www.instagram.com/accounts/login/)\"}",
+      "secs": 0.9
+    },
+    "chain": {
+      "ok": true,
+      "winner": "yt-dlp",
+      "secs": 1.65
+    }
+  },
+  {
+    "url": "https://www.instagram.com/reel/Da6DPjrsSgB/",
+    "type": "reel",
+    "yt-dlp": {
+      "ok": true,
+      "caption_chars": 51,
+      "media": 1,
+      "kind": "video",
+      "secs": 1.69
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 51,
+      "media": 1,
+      "kind": "video",
+      "secs": 12.22
+    },
+    "gallery-dl": {
+      "ok": false,
+      "error": "RuntimeError: {\"error\": \"AbortExtraction\", \"message\": \"HTTP redirect to login page (https://www.instagram.com/accounts/login/)\"}",
+      "secs": 0.7
+    },
+    "chain": {
+      "ok": true,
+      "winner": "yt-dlp",
+      "secs": 1.69
+    }
+  },
+  {
+    "url": "https://www.instagram.com/reel/DcBx_I1iHZW/",
+    "type": "reel",
+    "yt-dlp": {
+      "ok": true,
+      "caption_chars": 325,
+      "media": 1,
+      "kind": "video",
+      "secs": 1.64
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 325,
+      "media": 1,
+      "kind": "video",
+      "secs": 8.28
+    },
+    "gallery-dl": {
+      "ok": false,
+      "error": "RuntimeError: {\"error\": \"AbortExtraction\", \"message\": \"HTTP redirect to login page (https://www.instagram.com/accounts/login/)\"}",
+      "secs": 0.75
+    },
+    "chain": {
+      "ok": true,
+      "winner": "yt-dlp",
+      "secs": 1.64
+    }
+  }
+]

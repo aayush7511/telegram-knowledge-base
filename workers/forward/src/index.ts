@@ -1,6 +1,6 @@
-import type { Env, JobDescriptor, ReportableState, StatusUpdate } from "./types";
+import type { Env, JobDescriptor, ReportableState, RetryRequest, StatusUpdate } from "./types";
 import { REPORTABLE_STATES } from "./types";
-import { allJobsSaved, applyStatusUpdate, markForwarded } from "./db";
+import { allJobsSaved, applyStatusUpdate, markForwarded, prepareRetry } from "./db";
 import { setDoneReaction } from "./telegram";
 
 function json(body: unknown, status = 200): Response {
@@ -41,16 +41,17 @@ export default {
     }
   },
 
-  // Status-update endpoint: Cloud Run's only path to D1. Shared-secret auth —
-  // this is a public workers.dev URL otherwise.
+  // Cloud Run's only paths to D1 and the queue: /status and /retry. Shared-secret
+  // auth — this is a public workers.dev URL otherwise.
   async fetch(request, env, ctx): Promise<Response> {
     const { pathname } = new URL(request.url);
-    if (request.method !== "POST" || pathname !== "/status") {
+    if (request.method !== "POST" || (pathname !== "/status" && pathname !== "/retry")) {
       return new Response("not found", { status: 404 });
     }
     if (request.headers.get("X-KB-Secret") !== env.WORKER2_SHARED_SECRET) {
       return new Response("unauthorized", { status: 401 });
     }
+    if (pathname === "/retry") return handleRetry(request, env);
 
     let update: StatusUpdate;
     try {
@@ -87,3 +88,26 @@ export default {
     return json({ ok: true });
   },
 } satisfies ExportedHandler<Env, JobDescriptor>;
+
+// Put a job back on the queue after delay_seconds, rebuilt from its D1 row with
+// the retry count bumped — Cloud Run asks for this when the YouTube home worker
+// is unreachable (specs/youtube-home-worker.md).
+async function handleRetry(request: Request, env: Env): Promise<Response> {
+  let body: RetryRequest;
+  try {
+    body = await request.json<RetryRequest>();
+  } catch {
+    return json({ ok: false, error: "invalid JSON body" }, 400);
+  }
+  if (!body.job_id || typeof body.job_id !== "string") {
+    return json({ ok: false, error: "job_id required" }, 400);
+  }
+  if (!Number.isInteger(body.delay_seconds) || body.delay_seconds < 0) {
+    return json({ ok: false, error: "delay_seconds must be a non-negative integer" }, 400);
+  }
+
+  const job = await prepareRetry(env.DB, body.job_id, new Date().toISOString());
+  if (!job) return json({ ok: false, error: `unknown job_id ${body.job_id}` }, 404);
+  await env.JOB_QUEUE.send(job, { delaySeconds: body.delay_seconds });
+  return json({ ok: true, retry_count: job.retry_count });
+}

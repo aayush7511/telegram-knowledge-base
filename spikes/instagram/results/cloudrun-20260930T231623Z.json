@@ -1,0 +1,446 @@
+[
+  {
+    "url": "https://www.instagram.com/p/C9GAp84SPWW/",
+    "type": "post",
+    "yt-dlp": {
+      "ok": true,
+      "caption_chars": 8,
+      "media": 1,
+      "kind": "video",
+      "secs": 1.86
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 8,
+      "media": 1,
+      "kind": "video",
+      "secs": 5.95
+    },
+    "chain": {
+      "ok": true,
+      "winner": "yt-dlp",
+      "secs": 1.86
+    }
+  },
+  {
+    "url": "https://www.instagram.com/p/DJjZATXyi2W/",
+    "type": "post",
+    "yt-dlp": {
+      "ok": true,
+      "caption_chars": 155,
+      "media": 1,
+      "kind": "video",
+      "secs": 1.5
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 155,
+      "media": 1,
+      "kind": "video",
+      "secs": 2.81
+    },
+    "chain": {
+      "ok": true,
+      "winner": "yt-dlp",
+      "secs": 1.5
+    }
+  },
+  {
+    "url": "https://www.instagram.com/p/DQ3zR6-DPGm/",
+    "type": "post",
+    "yt-dlp": {
+      "ok": false,
+      "error": "DownloadError: ERROR: [Instagram] DQ3zRtyjGi6: No video formats found!; please report this issue on  https://github.com/yt-dlp/yt-dlp/issues?q= , filling out the appropriate issue template. Confirm yo",
+      "secs": 1.55
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 261,
+      "media": 6,
+      "kind": "carousel",
+      "secs": 1.9
+    },
+    "chain": {
+      "ok": true,
+      "winner": "instaloader",
+      "secs": 3.45
+    }
+  },
+  {
+    "url": "https://www.instagram.com/p/DRPzD6oCLFZ/",
+    "type": "post",
+    "yt-dlp": {
+      "ok": false,
+      "error": "DownloadError: ERROR: [Instagram] DRPzDodCNMj: No video formats found!; please report this issue on  https://github.com/yt-dlp/yt-dlp/issues?q= , filling out the appropriate issue template. Confirm yo",
+      "secs": 1.49
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 312,
+      "media": 3,
+      "kind": "carousel",
+      "secs": 0.63
+    },
+    "chain": {
+      "ok": true,
+      "winner": "instaloader",
+      "secs": 2.12
+    }
+  },
+  {
+    "url": "https://www.instagram.com/p/DUNGKnBCSdC/",
+    "type": "post",
+    "yt-dlp": {
+      "ok": true,
+      "caption_chars": 28,
+      "media": 1,
+      "kind": "video",
+      "secs": 1.65
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 28,
+      "media": 1,
+      "kind": "video",
+      "secs": 4.53
+    },
+    "chain": {
+      "ok": true,
+      "winner": "yt-dlp",
+      "secs": 1.65
+    }
+  },
+  {
+    "url": "https://www.instagram.com/p/DVOOZXek3sl/",
+    "type": "post",
+    "yt-dlp": {
+      "ok": false,
+      "error": "DownloadError: ERROR: [Instagram] DVOOZGLEytY: No video formats found!; please report this issue on  https://github.com/yt-dlp/yt-dlp/issues?q= , filling out the appropriate issue template. Confirm yo",
+      "secs": 1.59
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 1207,
+      "media": 8,
+      "kind": "carousel",
+      "secs": 1.42
+    },
+    "chain": {
+      "ok": true,
+      "winner": "instaloader",
+      "secs": 3.01
+    }
+  },
+  {
+    "url": "https://www.instagram.com/p/DaU7f-CjE1c/",
+    "type": "post",
+    "yt-dlp": {
+      "ok": false,
+      "error": "DownloadError: ERROR: [Instagram] DaU7UTFM2EB: No video formats found!; please report this issue on  https://github.com/yt-dlp/yt-dlp/issues?q= , filling out the appropriate issue template. Confirm yo",
+      "secs": 3.55
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 218,
+      "media": 3,
+      "kind": "carousel",
+      "secs": 2.45
+    },
+    "chain": {
+      "ok": true,
+      "winner": "instaloader",
+      "secs": 6.0
+    }
+  },
+  {
+    "url": "https://www.instagram.com/p/Db6URBZAWgg/",
+    "type": "post",
+    "yt-dlp": {
+      "ok": false,
+      "error": "DownloadError: ERROR: [Instagram] Db6URBZAWgg: There is no video in this post",
+      "secs": 1.75
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 4,
+      "media": 1,
+      "kind": "image",
+      "secs": 1.32
+    },
+    "chain": {
+      "ok": true,
+      "winner": "instaloader",
+      "secs": 3.07
+    }
+  },
+  {
+    "url": "https://www.instagram.com/p/Be3rTNplCHf/",
+    "type": "post",
+    "yt-dlp": {
+      "ok": false,
+      "error": "DownloadError: ERROR: [Instagram] Be3rTNplCHf: There is no video in this post",
+      "secs": 1.4
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 17,
+      "media": 1,
+      "kind": "image",
+      "secs": 0.9
+    },
+    "chain": {
+      "ok": true,
+      "winner": "instaloader",
+      "secs": 2.3
+    }
+  },
+  {
+    "url": "https://www.instagram.com/p/BsOGulcndj-/",
+    "type": "post",
+    "yt-dlp": {
+      "ok": false,
+      "error": "DownloadError: ERROR: [Instagram] BsOGulcndj-: There is no video in this post",
+      "secs": 1.45
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 192,
+      "media": 1,
+      "kind": "image",
+      "secs": 1.2
+    },
+    "chain": {
+      "ok": true,
+      "winner": "instaloader",
+      "secs": 2.65
+    }
+  },
+  {
+    "url": "https://www.instagram.com/reel/C8CaBfWs1mr/",
+    "type": "reel",
+    "yt-dlp": {
+      "ok": true,
+      "caption_chars": 112,
+      "media": 1,
+      "kind": "video",
+      "secs": 1.63
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 112,
+      "media": 1,
+      "kind": "video",
+      "secs": 3.01
+    },
+    "chain": {
+      "ok": true,
+      "winner": "yt-dlp",
+      "secs": 1.63
+    }
+  },
+  {
+    "url": "https://www.instagram.com/reel/DGyFM8jq-va/",
+    "type": "reel",
+    "yt-dlp": {
+      "ok": true,
+      "caption_chars": 135,
+      "media": 1,
+      "kind": "video",
+      "secs": 1.6
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 135,
+      "media": 1,
+      "kind": "video",
+      "secs": 5.8
+    },
+    "chain": {
+      "ok": true,
+      "winner": "yt-dlp",
+      "secs": 1.6
+    }
+  },
+  {
+    "url": "https://www.instagram.com/reel/DKcalTzoftf/",
+    "type": "reel",
+    "yt-dlp": {
+      "ok": true,
+      "caption_chars": 56,
+      "media": 1,
+      "kind": "video",
+      "secs": 1.75
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 56,
+      "media": 1,
+      "kind": "video",
+      "secs": 4.5
+    },
+    "chain": {
+      "ok": true,
+      "winner": "yt-dlp",
+      "secs": 1.75
+    }
+  },
+  {
+    "url": "https://www.instagram.com/reel/DMmxU4bKcsR/",
+    "type": "reel",
+    "yt-dlp": {
+      "ok": true,
+      "caption_chars": 34,
+      "media": 1,
+      "kind": "video",
+      "secs": 1.52
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 34,
+      "media": 1,
+      "kind": "video",
+      "secs": 18.45
+    },
+    "chain": {
+      "ok": true,
+      "winner": "yt-dlp",
+      "secs": 1.52
+    }
+  },
+  {
+    "url": "https://www.instagram.com/reel/DOuM2pFiEsz/",
+    "type": "reel",
+    "yt-dlp": {
+      "ok": false,
+      "error": "DownloadError: ERROR: [Instagram] DOuM2pFiEsz: There is no video in this post",
+      "secs": 1.69
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 293,
+      "media": 1,
+      "kind": "image",
+      "secs": 1.85
+    },
+    "chain": {
+      "ok": true,
+      "winner": "instaloader",
+      "secs": 3.54
+    }
+  },
+  {
+    "url": "https://www.instagram.com/reel/DPd8KODDA4d/",
+    "type": "reel",
+    "yt-dlp": {
+      "ok": true,
+      "caption_chars": 27,
+      "media": 1,
+      "kind": "video",
+      "secs": 1.66
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 27,
+      "media": 1,
+      "kind": "video",
+      "secs": 7.69
+    },
+    "chain": {
+      "ok": true,
+      "winner": "yt-dlp",
+      "secs": 1.66
+    }
+  },
+  {
+    "url": "https://www.instagram.com/reel/DQCkNLtgqEe/",
+    "type": "reel",
+    "yt-dlp": {
+      "ok": true,
+      "caption_chars": 130,
+      "media": 1,
+      "kind": "video",
+      "secs": 1.68
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 130,
+      "media": 1,
+      "kind": "video",
+      "secs": 3.89
+    },
+    "chain": {
+      "ok": true,
+      "winner": "yt-dlp",
+      "secs": 1.68
+    }
+  },
+  {
+    "url": "https://www.instagram.com/reel/DZaO__gO0rz/",
+    "type": "reel",
+    "yt-dlp": {
+      "ok": true,
+      "caption_chars": 560,
+      "media": 1,
+      "kind": "video",
+      "secs": 1.55
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 560,
+      "media": 1,
+      "kind": "video",
+      "secs": 13.97
+    },
+    "chain": {
+      "ok": true,
+      "winner": "yt-dlp",
+      "secs": 1.55
+    }
+  },
+  {
+    "url": "https://www.instagram.com/reel/Da6DPjrsSgB/",
+    "type": "reel",
+    "yt-dlp": {
+      "ok": true,
+      "caption_chars": 51,
+      "media": 1,
+      "kind": "video",
+      "secs": 1.72
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 51,
+      "media": 1,
+      "kind": "video",
+      "secs": 7.7
+    },
+    "chain": {
+      "ok": true,
+      "winner": "yt-dlp",
+      "secs": 1.72
+    }
+  },
+  {
+    "url": "https://www.instagram.com/reel/DcBx_I1iHZW/",
+    "type": "reel",
+    "yt-dlp": {
+      "ok": true,
+      "caption_chars": 325,
+      "media": 1,
+      "kind": "video",
+      "secs": 1.54
+    },
+    "instaloader": {
+      "ok": true,
+      "caption_chars": 325,
+      "media": 1,
+      "kind": "video",
+      "secs": 4.47
+    },
+    "chain": {
+      "ok": true,
+      "winner": "yt-dlp",
+      "secs": 1.54
+    }
+  }
+]

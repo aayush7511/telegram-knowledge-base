@@ -3,7 +3,9 @@ write, failure handling.
 
 fetcher.render / extract_content / summarizer / telegram / graph.write_episode
 / articles.store_article are mocked so the test is offline; post_status is
-captured to assert the state progression.
+captured to assert the state progression. telegram.format_extraction_reply is
+replaced by a recorder, so these tests cover the wiring around the reply, not
+its text (that's test_extraction_reply.py).
 """
 from fastapi.testclient import TestClient
 
@@ -11,9 +13,9 @@ import main
 from extract import ResponseObject
 
 HEADERS = {"X-KB-Secret": "s"}
-# Long enough to pass the article-text minimum and to get a summary
-# (sources.MIN_ARTICLE_CHARS, main.SUMMARY_MIN_CHARS).
+# Long enough to pass the article-text minimum (sources.MIN_ARTICLE_CHARS).
 ARTICLE = "body " * 400
+EXTRACTED = main.graph.Extracted(entities=["Zep", "Graphiti"], facts=["Zep built Graphiti."])
 BLOG_JOB = {
     "job_id": "j1",
     "content_type": "url",
@@ -48,9 +50,12 @@ def _wire(monkeypatch, *, render=None, write_episode=None, text=ARTICLE):
     monkeypatch.setattr(main, "post_status", fake_status)
 
     episodes: list[dict] = []
+    events: list[str] = []  # graph writes and replies, in order
 
     async def default_write_episode(job_id, **kw):
         episodes.append({"job_id": job_id, **kw})
+        events.append("graph")
+        return EXTRACTED
 
     monkeypatch.setattr(main.graph, "write_episode", write_episode or default_write_episode)
 
@@ -70,11 +75,30 @@ def _wire(monkeypatch, *, render=None, write_episode=None, text=ARTICLE):
         lambda html, url: ResponseObject(url=url, title="T", author="A", sitename="S", text=text),
     )
 
+    summarize_calls: list[str] = []
+
     class FakeSummarizer:
         def summarize(self, text, title=None):
+            summarize_calls.append(text)
             return "SUMMARY"
 
     monkeypatch.setattr(main, "get_summarizer", lambda: FakeSummarizer())
+
+    replies: list[dict] = []
+
+    def fake_format(ro, entities, facts):
+        replies.append({"ro": ro, "entities": entities, "facts": facts})
+        return "REPLY"
+
+    monkeypatch.setattr(main.telegram, "format_extraction_reply", fake_format)
+
+    htmls: list[dict] = []
+
+    async def fake_send_html(chat_id, message_id, text, token):
+        htmls.append({"chat_id": chat_id, "message_id": message_id, "text": text})
+        events.append("reply")
+
+    monkeypatch.setattr(main.telegram, "send_html", fake_send_html)
 
     sent: dict = {}
 
@@ -89,7 +113,10 @@ def _wire(monkeypatch, *, render=None, write_episode=None, text=ARTICLE):
         texts.append({"chat_id": chat_id, "message_id": message_id, "text": text})
 
     monkeypatch.setattr(main.telegram, "send_text", fake_send_text)
-    return states, sent, {"episodes": episodes, "summaries": summaries, "archived": archived, "texts": texts}
+    return states, sent, {
+        "episodes": episodes, "summaries": summaries, "archived": archived, "texts": texts,
+        "replies": replies, "htmls": htmls, "events": events, "summarize_calls": summarize_calls,
+    }
 
 
 def test_blog_happy_path(monkeypatch):
@@ -100,13 +127,16 @@ def test_blog_happy_path(monkeypatch):
 
     assert resp.status_code == 200
     assert resp.json() == {"accepted": True, "job_id": "j1"}
-    assert [s for s, _ in states] == ["fetching", "summarizing", "indexing", "saved"]
-    assert sent["chat_id"] == 42 and sent["message_id"] == 7
-    assert sent["ro"].summary == "SUMMARY"
+    assert [s for s, _ in states] == ["fetching", "indexing", "saved"]
+    # the reply lists what the graph write extracted, with the item as header
+    [reply] = seen["replies"]
+    assert reply["ro"].title == "T"
+    assert (reply["entities"], reply["facts"]) == (EXTRACTED.entities, EXTRACTED.facts)
+    assert seen["htmls"] == [{"chat_id": 42, "message_id": 7, "text": "REPLY"}]
+    assert sent == {}  # the old summary reply is gone
 
-    # graph episode: title + full cleaned article text in the body (not the
-    # summary — that only goes into the Telegram reply), provenance in
-    # source_description
+    # graph episode: title + full cleaned article text in the body, provenance
+    # in source_description
     [ep] = seen["episodes"]
     assert ep["job_id"] == "j1"
     assert ep["name"] == "T"
@@ -115,7 +145,7 @@ def test_blog_happy_path(monkeypatch):
     assert ep["reference_time"].isoformat() == "2026-09-16T10:00:00+00:00"
     # D1 gets the same text with the indexing status, so the graph is rebuildable
     assert seen["summaries"] == {"indexing": f"T\n\n{ARTICLE}"}
-    # the cleaned article text is archived before summarization
+    # the cleaned article text is still archived
     assert seen["archived"] == {"j1": ARTICLE}
 
 
@@ -133,7 +163,7 @@ def test_blog_failure_marks_failed_and_skips_reply(monkeypatch):
     assert resp.status_code == 200
     assert [s for s, _ in states] == ["fetching", "failed"]
     assert "dead url" in states[-1][1]
-    assert sent == {}  # no Telegram reply on failure
+    assert sent == {} and seen["htmls"] == []  # no Telegram reply on failure
     assert seen["texts"] == []  # a broken fetch isn't "not supported"
     assert seen["episodes"] == []
 
@@ -167,7 +197,7 @@ def test_blog_http_error_is_not_supported(monkeypatch):
     assert seen["archived"] == {} and sent == {} and seen["episodes"] == []
 
 
-def test_blog_graph_failure_after_reply(monkeypatch):
+def test_graph_failure_replies_couldnt_save(monkeypatch):
     async def boom(job_id, **kw):
         raise RuntimeError("FalkorDB unreachable")
 
@@ -177,15 +207,16 @@ def test_blog_graph_failure_after_reply(monkeypatch):
     resp = client.post("/jobs", headers=HEADERS, json=BLOG_JOB)
 
     assert resp.status_code == 200
-    # the summary was already delivered; only the graph step is recorded as failed
-    assert [s for s, _ in states] == ["fetching", "summarizing", "indexing", "failed"]
+    assert [s for s, _ in states] == ["fetching", "indexing", "failed"]
     assert "FalkorDB unreachable" in states[-1][1]
-    assert sent["ro"].summary == "SUMMARY"
+    assert [t["text"] for t in seen["texts"]] == ["Couldn't save this to memory"]
+    assert seen["htmls"] == []
+    # D1 still has the episode text, so the job can be re-driven
     assert seen["summaries"] == {"indexing": f"T\n\n{ARTICLE}"}
 
 
-def test_short_item_skips_summary_and_reply(monkeypatch):
-    """A short item (a post, a one-paragraph answer) goes straight to the graph."""
+def test_short_item_gets_the_reply_too(monkeypatch):
+    """A short item (a post, a one-paragraph answer) gets the same reply as an article."""
     states, sent, seen = _wire(monkeypatch)
 
     async def fetch_post(url):
@@ -197,7 +228,7 @@ def test_short_item_skips_summary_and_reply(monkeypatch):
 
     assert resp.status_code == 200
     assert [s for s, _ in states] == ["fetching", "indexing", "saved"]
-    assert sent == {} and seen["texts"] == []  # 👌 is the acknowledgement
+    assert len(seen["htmls"]) == 1 and seen["texts"] == []
     [ep] = seen["episodes"]
     assert ep["name"] == "https://x.com/karpathy/status/1"  # no title → the url
     assert ep["body"] == "A short post."
@@ -240,8 +271,8 @@ def test_pdf_file_runs_the_shared_pipeline(monkeypatch):
 
     assert resp.status_code == 200
     assert keys == ["raw-media/j4.pdf"]
-    assert [s for s, _ in states] == ["fetching", "summarizing", "indexing", "saved"]
-    assert sent["ro"].summary == "SUMMARY"
+    assert [s for s, _ in states] == ["fetching", "indexing", "saved"]
+    assert len(seen["htmls"]) == 1
     [ep] = seen["episodes"]
     assert ep["name"] == "your PDF"  # no title → the reply target
     assert ep["source_description"] == "pdf: Telegram file | site: Telegram"
@@ -270,7 +301,7 @@ def test_other_documents_are_not_supported(monkeypatch):
     assert seen["texts"][0]["text"] == "Skipped (not ingestible):\n• your file — only PDF files are supported"
 
 
-def test_text_note_goes_straight_to_the_graph(monkeypatch):
+def test_text_job_replies(monkeypatch):
     states, sent, seen = _wire(monkeypatch)
     client = TestClient(main.app)
 
@@ -278,7 +309,11 @@ def test_text_note_goes_straight_to_the_graph(monkeypatch):
 
     assert resp.status_code == 200
     assert [s for s, _ in states] == ["indexing", "saved"]
-    assert sent == {}  # no reply: the 👌 reaction is the acknowledgement
+    # a text note gets the reply too, with no header
+    [reply] = seen["replies"]
+    assert reply["ro"] is None and reply["entities"] == EXTRACTED.entities
+    assert seen["htmls"] == [{"chat_id": 42, "message_id": 8, "text": "REPLY"}]
+    assert seen["events"] == ["graph", "reply"]
     [ep] = seen["episodes"]
     assert ep["job_id"] == "j2"
     assert ep["name"] == "Remember: FalkorDB runs on the e2-micro."
@@ -291,11 +326,12 @@ def test_text_note_graph_failure(monkeypatch):
     async def boom(job_id, **kw):
         raise RuntimeError("FalkorDB unreachable")
 
-    states, _, _ = _wire(monkeypatch, write_episode=boom)
+    states, _, seen = _wire(monkeypatch, write_episode=boom)
     resp = TestClient(main.app).post("/jobs", headers=HEADERS, json=TEXT_JOB)
 
     assert resp.status_code == 200
     assert [s for s, _ in states] == ["indexing", "failed"]
+    assert [t["text"] for t in seen["texts"]] == ["Couldn't save this to memory"]
 
 
 def test_other_content_types_use_stub(monkeypatch):
@@ -313,34 +349,27 @@ def test_other_content_types_use_stub(monkeypatch):
     assert seen["episodes"] == []
 
 
-def test_summarize_runs_off_the_event_loop(monkeypatch):
-    """summarize() blocks (limiter sleeps + sync SDK); it must not stall the loop.
-
-    Now that the pipeline runs inline in the request, a blocking call on the
-    event-loop thread would freeze /health and every other in-flight request.
-    """
-    import threading
-
-    _wire(monkeypatch)
-    loop_thread = {}
-    call_thread = {}
-
-    class ThreadRecordingSummarizer:
-        def summarize(self, text, title=None):
-            call_thread["name"] = threading.current_thread().name
-            return "SUMMARY"
-
-    monkeypatch.setattr(main, "get_summarizer", lambda: ThreadRecordingSummarizer())
-
-    async def record_render(url, **kw):
-        loop_thread["name"] = threading.current_thread().name
-        return "<html>body</html>"
-
-    monkeypatch.setattr(main.sources.fetcher, "render", record_render)
+def test_url_job_skips_summarizing_and_replies_after_indexing(monkeypatch):
+    states, _, seen = _wire(monkeypatch)
 
     TestClient(main.app).post("/jobs", headers=HEADERS, json=BLOG_JOB)
 
-    assert call_thread["name"] != loop_thread["name"]
+    assert seen["summarize_calls"] == []  # no Gemini call
+    assert [s for s, _ in states] == ["fetching", "indexing", "saved"]
+    assert seen["events"] == ["graph", "reply"]
+
+
+def test_reply_send_failure_still_saved(monkeypatch):
+    states, _, seen = _wire(monkeypatch)
+
+    async def broken_send(chat_id, message_id, text, token):
+        raise main.httpx.ConnectError("telegram down")
+
+    monkeypatch.setattr(main.telegram, "send_html", broken_send)
+    resp = TestClient(main.app).post("/jobs", headers=HEADERS, json=BLOG_JOB)
+
+    assert resp.status_code == 200
+    assert [s for s, _ in states] == ["fetching", "indexing", "saved"]
 
 
 def test_bad_secret_rejected(monkeypatch):

@@ -81,7 +81,7 @@ describe("state updates", () => {
     expect((await getRow("j1"))!.r2_key).toBe("raw-media/j1.mp3");
   });
 
-  it("sets r2_key when provided (Pi fetch fills it in)", async () => {
+  it("sets r2_key when provided (a fetch fills it in)", async () => {
     await seedJob(textJob("j1"), "fetching", null);
     await post({ job_id: "j1", state: "transcribing", r2_key: "raw-media/j1.mp3" });
     expect((await getRow("j1"))!.r2_key).toBe("raw-media/j1.mp3");
@@ -166,6 +166,79 @@ describe("transition validation", () => {
   it("lets a text note skip straight from forwarded to indexing", async () => {
     await seedJob(textJob("j1"), "forwarded");
     expect((await post({ job_id: "j1", state: "indexing" })).status).toBe(200);
+    expect((await getRow("j1"))!.state).toBe("indexing");
+  });
+});
+
+// specs/youtube-home-worker.md tests 11 and 12: the `retrying` state.
+describe("retrying", () => {
+  it("allows fetching → retrying, retrying → fetching, and retrying → failed", () => {
+    expect(canTransition("fetching", "retrying")).toBe(true);
+    expect(canTransition("retrying", "fetching")).toBe(true);
+    expect(canTransition("retrying", "failed")).toBe(true);
+  });
+
+  it.each([
+    ["summarizing", "fetching"],
+    ["indexing", "summarizing"],
+    ["retrying", "indexing"],
+    ["retrying", "saved"],
+    ["queued", "retrying"],
+    ["forwarded", "retrying"],
+    ["indexing", "retrying"],
+    ["saved", "retrying"],
+  ])("still rejects %s → %s", (from, to) => {
+    expect(canTransition(from, to)).toBe(false);
+  });
+
+  it("accepts a reported retrying from fetching", async () => {
+    await seedJob(textJob("j1"), "fetching");
+    const res = await post({ job_id: "j1", state: "retrying" });
+    expect(res.status).toBe(200);
+    expect((await getRow("j1"))!.state).toBe("retrying");
+  });
+
+  it("accepts fetching when a retried job comes back", async () => {
+    await seedJob(textJob("j1"), "retrying");
+    const res = await post({ job_id: "j1", state: "fetching" });
+    expect(res.status).toBe(200);
+    expect((await getRow("j1"))!.state).toBe("fetching");
+  });
+
+  it("409s any other backward move", async () => {
+    await seedJob(textJob("j1"), "summarizing");
+    const res = await post({ job_id: "j1", state: "fetching" });
+    expect(res.status).toBe(409);
+    expect((await getRow("j1"))!.state).toBe("summarizing");
+  });
+});
+
+// specs/summarize-retry.md tests 11–13: a job whose summarize hit an overloaded
+// Gemini waits in `retrying` and resumes at summarizing.
+describe("retrying from summarizing", () => {
+  it("allows summarizing → retrying and retrying → summarizing", () => {
+    expect(canTransition("summarizing", "retrying")).toBe(true);
+    expect(canTransition("retrying", "summarizing")).toBe(true);
+  });
+
+  it("accepts a reported retrying from summarizing", async () => {
+    await seedJob(textJob("j1"), "summarizing");
+    const res = await post({ job_id: "j1", state: "retrying" });
+    expect(res.status).toBe(200);
+    expect((await getRow("j1"))!.state).toBe("retrying");
+  });
+
+  it("accepts summarizing when a resumed job comes back", async () => {
+    await seedJob(textJob("j1"), "retrying");
+    const res = await post({ job_id: "j1", state: "summarizing" });
+    expect(res.status).toBe(200);
+    expect((await getRow("j1"))!.state).toBe("summarizing");
+  });
+
+  it("409s indexing → retrying", async () => {
+    await seedJob(textJob("j1"), "indexing");
+    const res = await post({ job_id: "j1", state: "retrying" });
+    expect(res.status).toBe(409);
     expect((await getRow("j1"))!.state).toBe("indexing");
   });
 });

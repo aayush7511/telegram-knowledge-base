@@ -1,0 +1,10 @@
+# What `gcloud run deploy --source .` uploads. Without this file gcloud would
+# upload everything here, including the local venv and .dev.vars (secrets).
+.gcloudignore
+.venv/
+.pytest_cache/
+__pycache__/
+*.pyc
+.dev.vars
+.DS_Store
+test/

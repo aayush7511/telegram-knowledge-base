@@ -3,10 +3,11 @@
 Processing orchestrator for the knowledge-base pipeline. **Blog URL jobs are
 fully processed here**: Playwright renders the page, Trafilatura extracts the
 body text and extruct extracts title/author/sitename (JSON-LD → microdata →
-rdfa → opengraph cascade), the article text is archived in R2, Gemini
-summarizes, the summary is sent back on Telegram, and then written into the
-knowledge graph (Graphiti → FalkorDB). **Text notes** go straight into the
-graph. Other job types (native-media ASR, Instagram/YouTube Pi delegation) are
+rdfa → opengraph cascade), the article text is archived in R2 and written
+into the knowledge graph (Graphiti → FalkorDB), and the reply on Telegram lists
+the entities and facts that went in ([specs/extraction-reply.md](../../specs/extraction-reply.md)).
+**Text notes** go straight into the graph, with the same reply. Gemini
+summaries were dropped on 2026-10-17; `summarize.py` is still here, unused. Other job types (native-media ASR, Instagram) are
 still stubs. See [CLAUDE.md](../../CLAUDE.md) for the architecture and
 [docs/design/v2.md](../../docs/design/v2.md) for the graph decisions.
 
@@ -15,16 +16,17 @@ still stubs. See [CLAUDE.md](../../CLAUDE.md) for the architecture and
 - `main.py` — FastAPI app; `POST /jobs` branches URL jobs whose source has a
   fetcher into `process_url_job`, PDF files into `process_pdf_file_job` (both
   run the shared `process_source_job`), and text notes into `process_text_job`, all
-  running **synchronously inside the request** (see below). Items under
-  `SUMMARY_MIN_CHARS` (1,500) skip the summary and reply; a link with nothing
-  to remember gets a "Skipped (not ingestible)" reply and ends `failed`.
+  running **synchronously inside the request** (see below). A link with
+  nothing to remember gets a "Skipped (not ingestible)" reply and ends `failed`.
 - `sources.py` — `FETCHERS`: one fetcher per `url_source` (url → `ResponseObject`,
   or `NotSupported`). `blog` renders + extracts and rejects pages under
-  `MIN_ARTICLE_CHARS` (1,000) of text; `youtube` is the video's
-  existing captions via Supadata (`SUPADATA_API_KEY`; `mode=native` only — 1
-  credit per video, free plan 100/month; long videos are an async job polled
-  for up to 240s) + oEmbed title/channel — YouTube blocks Cloud Run's IPs and
-  free proxies, so we can't fetch captions ourselves (spikes/youtube-transcript); `x` is FxTwitter's `/2/thread` — the author's
+  `MIN_ARTICLE_CHARS` (1,000) of text; `youtube` is English
+  captions from the home worker on the owner's Mac (`services/yt-worker`, see
+  [YouTube home worker](#youtube-home-worker)), with Supadata only when YouTube
+  blocks the home IP (`SUPADATA_API_KEY`; `mode=native` only — 1 credit per
+  video, free plan 100/month; long videos are an async job polled for up to
+  240s) + oEmbed title/channel — YouTube blocks Cloud Run's IPs and free
+  proxies, so we can't fetch captions from here (spikes/youtube-transcript); `x` is FxTwitter's `/2/thread` — the author's
   whole thread, X Articles flattened, quoted posts appended (spikes/x-fxtwitter);
   `stackexchange` is the official API — question + accepted (else top-voted)
   answer, or the linked answer; `github` is the REST API — a repo's README, an
@@ -40,8 +42,8 @@ still stubs. See [CLAUDE.md](../../CLAUDE.md) for the architecture and
 - `extract.py` — `extract_content(html, url)` → `ResponseObject` (text + metadata cascade).
 - `articles.py` — `store_article(job_id, text)`: cleaned article text → R2
   `articles/{job_id}.txt` (S3 API via boto3). Best-effort; no-op until `R2_*` is set.
-- `summarize.py` — `Summarizer`: Gemini with a 5-RPM sliding-window limiter.
-- `telegram.py` — `send_summary(...)` / `send_text(...)`: Bot API replies, threaded to the source message.
+- `summarize.py` — `Summarizer`: Gemini with a 5-RPM sliding-window limiter. Unused since 2026-10-17.
+- `telegram.py` — `format_extraction_reply(...)` builds the reply (entities + facts, capped at 15 / 10, deduped, truncated to fit one message); `send_html(...)` / `send_text(...)` post Bot API replies threaded to the source message. `send_summary` is the old, unused summary reply.
 - `graph.py` — `write_episode(...)`: one Graphiti episode per job into FalkorDB
   (graph `second-brain`), `gpt-4.1-mini` at temperature 0 for extraction,
   `text-embedding-3-small` for embeddings. Built lazily on first use — the
@@ -53,7 +55,7 @@ still stubs. See [CLAUDE.md](../../CLAUDE.md) for the architecture and
 ## Why blog jobs are processed synchronously
 
 `/jobs` runs the whole pipeline before responding, so Worker 2's push stays open
-for ~20-30s of render + summarize plus the graph write (Graphiti makes ~7 LLM
+for the render plus the graph write (Graphiti makes ~7 LLM
 calls per episode; ~15s in M0, longer under rate limits — hence `--timeout 600`). Cloud Run only guarantees CPU **during request processing**, so
 anything deferred past the response (a FastAPI `BackgroundTask`, say) can be
 throttled mid-render and stall without ever writing a terminal state. Holding
@@ -61,13 +63,11 @@ the request keeps that guarantee without needing `--no-cpu-throttling`.
 
 Two consequences worth knowing:
 
-- `post_status` is async and `summarize()` runs via `asyncio.to_thread` — the
-  rate limiter's sleeps would otherwise block the event loop and freeze
-  `/health` and every other in-flight request for the duration of a job.
+- `post_status` is async, so a status post never blocks the event loop and
+  freezes `/health` or other in-flight requests.
 - `/jobs` returns **2xx even when a job fails**. The failure is already terminal
   in D1, so Worker 2 should ack the queue message rather than replay an
-  identical render+summarize that will fail the same way and consume the Gemini
-  rate budget. Genuinely transient failures are re-driven from D1, not the queue.
+  identical render that will fail the same way. Genuinely transient failures are re-driven from D1, not the queue.
 
 Worker 2 delivers one job at a time (`max_batch_size 1`, `max_concurrency 1`),
 so there is never a second pipeline running in this instance — which also keeps
@@ -75,13 +75,13 @@ Graphiti's entity dedup serial.
 
 ### Blog pipeline order
 
-`fetching` (render → extract → archive text in R2) → `summarizing` (Gemini) →
-Telegram reply → `indexing` (status post carries the episode text, then the
-Graphiti write) → `saved`. The reply goes out *before* the graph write, so a
-graph failure still leaves the user with the summary; the row ends `failed`
-with the error and the episode text sits in D1's `summary` column for a
-re-drive. Text notes: `indexing` → `saved`, no reply — Worker 2's 👌 reaction is
-the acknowledgement.
+`fetching` (render → extract → archive text in R2) → `indexing` (status post
+carries the episode text, then the Graphiti write) → Telegram reply listing the
+extracted entities and facts → `saved`. A graph failure replies "Couldn't save
+this to memory"; the row ends `failed` with the error and the episode text sits
+in D1's `summary` column for a re-drive. The reply is best-effort: if it fails
+to build or send, the job still ends `saved`. Text notes: `indexing` → reply
+(no header) → `saved`. A retry always re-fetches.
 
 ## Endpoints
 
@@ -107,12 +107,37 @@ Headers: X-KB-Secret: {WORKER2_SHARED_SECRET}
 Body: { "job_id": string, "state": string, "r2_key": string|null, "error": string|null, "summary": string|null }
 ```
 
-`state` is one of `fetching | transcribing | summarizing | indexing | saved |
+`state` is one of `fetching | retrying | transcribing | summarizing | indexing | saved |
 failed` (`forwarded` is written by Worker 2 itself). `summary` is sent with
 `indexing` for blog jobs. Worker 2 validates transitions and answers `409` for
 a backwards move or anything after `saved`; like every other status failure
 that's logged, not fatal. Until `WORKER2_STATUS_URL` is set, the callback is a
 logged no-op.
+
+## YouTube home worker
+
+Spec: [specs/youtube-home-worker.md](../../specs/youtube-home-worker.md). `sources._youtube_transcript` calls the worker (`POST {YT_WORKER_URL}/transcript`, `X-KB-Secret: {YT_WORKER_SECRET}`, 30s timeout):
+
+| Worker answer | What happens |
+|---|---|
+| captions | used; no Supadata call |
+| `no_captions` | "No captions" reply, `failed`; no Supadata call |
+| `blocked` | Supadata, as before |
+| `unavailable` (private/deleted) | "Unavailable at the moment" reply, `failed` |
+| 401 | "There was some error" reply, `failed` |
+| no answer / connection error / any other status | **retry flow** |
+| `YT_WORKER_URL` unset | "There was some error" reply, `failed` — a setup mistake, no Supadata |
+
+**Retry flow** (`main.handle_worker_unreachable`): the job goes `retrying` and Worker 2 is asked to re-enqueue it (`POST {WORKER2_RETRY_URL}` with `{job_id, delay_seconds}`, same `X-KB-Secret` as status posts, tried up to 3 times or the job is marked `failed`). The delay is an hour, pushed to 6 a.m. Chicago time if it would land between midnight and 6 a.m. (`retry_delay_seconds`). Worker 2 rebuilds the message from D1 with `retry_count` bumped. Only the first failure replies ("Unavailable at the moment, I'll try again later"); after 3 retries the reply is "Unable to get captions" and the job ends `failed`.
+
+**Rollout order** (YouTube links fail until all of these are in place):
+1. Apply D1 migration `0005` (`url_source`, `retry_count`) and deploy Worker 1 and Worker 2 — see [workers/forward/README.md](../../workers/forward/README.md#deploy-one-time-provisioning).
+2. Install the worker and Funnel on the Mac ([services/yt-worker/README.md](../yt-worker/README.md)).
+3. Set the env vars and deploy this service:
+   ```bash
+   gcloud run deploy kb-orchestrator --source . --region us-central1 \
+     --update-env-vars YT_WORKER_URL=https://<mac>.<tailnet>.ts.net,YT_WORKER_SECRET=<from the Mac install>,WORKER2_RETRY_URL=https://kb-forward.aayush7511.workers.dev/retry
+   ```
 
 ## Develop
 
@@ -130,7 +155,7 @@ curl -s -X POST localhost:8080/jobs -H "X-KB-Secret: devsecret" \
   -d '{"job_id":"b1","content_type":"url","url_source":"blog","url":"https://example.com/post","chat_id":123,"message_id":9}'
 ```
 
-Run tests: `pytest` (from this directory) — 103 tests. The suite is offline:
+Run tests: `pytest` (from this directory) — 159 tests (7 Gemini-overload tests skipped). The suite is offline:
 Playwright, Gemini, Telegram, Graphiti, R2, Supadata, YouTube oEmbed, FxTwitter, Stack Exchange, and GitHub are mocked. Graph-related env
 vars for a real local run: `FALKORDB_HOST` (+ `FALKORDB_PORT`,
 `FALKORDB_PASSWORD`), `OPENAI_API_KEY`; article archive: `R2_ACCOUNT_ID`,
@@ -171,7 +196,7 @@ app-level shared secret (Workers can't mint Google OIDC tokens); `--max-instance
 caps a retry-loop bug from burning the free tier and lets the summarizer's
 in-process 5-RPM limiter be authoritative; request-based billing (the default)
 is load-bearing — never switch to instance-based or add a poll loop.
-Secrets: `GEMINI_API_KEY` (summarizer), `TELEGRAM_BOT_TOKEN` (summary replies),
+Secrets: `GEMINI_API_KEY` (summarizer), `TELEGRAM_BOT_TOKEN` (replies),
 `OPENAI_API_KEY` (Graphiti extraction + embeddings), `FALKORDB_PASSWORD`, and
 the `R2_*` S3 credentials (article archive).
 
