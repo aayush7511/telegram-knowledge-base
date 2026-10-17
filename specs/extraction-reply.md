@@ -19,6 +19,7 @@ Today a URL or PDF save gets a Gemini summary as its Telegram reply, sent *befor
 | Duplicates | **None shown**: repeated entities and facts are removed (first one kept) before capping. "+N more" counts unique items only |
 | Long entities/facts | **Truncated** so the full 15 + 10 always fit in one message: entity ≤ **60** chars, fact ≤ **200** chars, title ≤ **200** chars, cut with "…" |
 | Nothing extracted | Reply **"Saved — nothing extracted"** (after the header, if any) |
+| Outdated facts | **"No longer true" section** (added 2026-10-17). Graphiti returns the old facts a save invalidated together with its own facts, so the first version listed them under Facts as if they'd been saved. Now **Facts** lists only facts whose `episodes` include this save (new, or an existing fact this save confirmed). Old facts this save made outdated go under **No longer true**, after Facts: at most **3** (so the worst case still fits under 4,096), 200-char truncation, deduped, "+N more". A new fact that simply has an end date (`invalid_at`) is still a Fact |
 | Retry resume | **Always re-fetch** (decided 2026-10-17): the resume-from-R2-archive branch (from summarize-retry) is removed, so a retried job always starts at `fetching` (allowed from `retrying`). Without it, a resumed job would go `retrying → indexing`, which `canTransition` rejects. The archive is still written. Before deploying, check D1 for jobs sitting in `retrying` |
 | Graph write fails | Reply **"Couldn't save this to memory"**. The job ends `failed` as today and can be re-driven from D1 |
 
@@ -26,7 +27,8 @@ Today a URL or PDF save gets a Gemini summary as its Telegram reply, sent *befor
 
 **Data:** `graph.write_episode(...)` now **returns** what Graphiti extracted instead of `None`:
 - `entities`: list of entity names (`EntityNode.name`), in Graphiti's order
-- `facts`: list of fact sentences (`EntityEdge.fact`), in Graphiti's order
+- `facts`: fact sentences (`EntityEdge.fact`) whose `episodes` include this job's episode, in Graphiti's order
+- `outdated`: fact sentences of the other returned edges, the old facts this save invalidated
 
 **Flow (URL / PDF):**
 1. `fetching` (also on every retry; no resume from the archive).
@@ -51,6 +53,11 @@ Zep, Graphiti, FalkorDB, … (up to 15, comma-separated)
 • Zep built Graphiti.
 • Graphiti stores graphs in FalkorDB.
 … (up to 10)
++N more
+
+<b>No longer true</b>
+• Aayush lives in Seattle.
+… (up to 3)
 +N more
 ```
 
@@ -102,6 +109,10 @@ Claude does the rest:
 | 12 | `test_graph_failure_replies_couldnt_save` | Graph write raises → "Couldn't save this to memory", ends `failed` |
 | 13 | `test_reply_send_failure_still_saved` | Telegram send raises → job still ends `saved` |
 | 14 | `test_write_episode_returns_entities_and_facts` | Names and facts from Graphiti's result, in order |
+| 16 | `test_outdated_facts_in_their_own_section` | Outdated facts appear under "No longer true", after Facts, not under Facts |
+| 17 | `test_outdated_capped_at_3_with_more` | 5 outdated → 3 shown, "+2 more" |
+| 18 | `test_full_caps_with_outdated_fit` | Every section full with max-length items + long link → under 4,096 |
+| 19 | `test_write_episode_splits_outdated_facts` | An edge without this episode's id in `episodes` → `outdated`, not `facts`. An edge with an end date but this episode's id → `facts` |
 | 15 | `test_retry_refetches_even_with_an_archive` | `retry_count` 1 with an archive in R2 → `fetching, indexing, saved`, page rendered again |
 
 ## Out of scope

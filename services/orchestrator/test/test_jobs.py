@@ -15,7 +15,9 @@ from extract import ResponseObject
 HEADERS = {"X-KB-Secret": "s"}
 # Long enough to pass the article-text minimum (sources.MIN_ARTICLE_CHARS).
 ARTICLE = "body " * 400
-EXTRACTED = main.graph.Extracted(entities=["Zep", "Graphiti"], facts=["Zep built Graphiti."])
+EXTRACTED = main.graph.Extracted(
+    entities=["Zep", "Graphiti"], facts=["Zep built Graphiti."], outdated=["Zep was a startup."]
+)
 BLOG_JOB = {
     "job_id": "j1",
     "content_type": "url",
@@ -86,8 +88,8 @@ def _wire(monkeypatch, *, render=None, write_episode=None, text=ARTICLE):
 
     replies: list[dict] = []
 
-    def fake_format(ro, entities, facts):
-        replies.append({"ro": ro, "entities": entities, "facts": facts})
+    def fake_format(ro, entities, facts, outdated):
+        replies.append({"ro": ro, "entities": entities, "facts": facts, "outdated": outdated})
         return "REPLY"
 
     monkeypatch.setattr(main.telegram, "format_extraction_reply", fake_format)
@@ -131,7 +133,9 @@ def test_blog_happy_path(monkeypatch):
     # the reply lists what the graph write extracted, with the item as header
     [reply] = seen["replies"]
     assert reply["ro"].title == "T"
-    assert (reply["entities"], reply["facts"]) == (EXTRACTED.entities, EXTRACTED.facts)
+    assert (reply["entities"], reply["facts"], reply["outdated"]) == (
+        EXTRACTED.entities, EXTRACTED.facts, EXTRACTED.outdated
+    )
     assert seen["htmls"] == [{"chat_id": 42, "message_id": 7, "text": "REPLY"}]
     assert sent == {}  # the old summary reply is gone
 

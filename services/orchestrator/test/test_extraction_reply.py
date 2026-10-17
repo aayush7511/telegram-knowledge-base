@@ -152,3 +152,41 @@ def test_full_caps_with_max_length_items_fit():
         assert f"{i:02d}" + "y" * 197 + "…" in msg
     assert "more" not in msg
     assert 'href="https://ex.com/' + "p" * 3000 + '"' in msg  # the link target stays whole
+
+
+# --- 16, 17, 18: old facts this save made outdated --------------------------
+
+def test_outdated_facts_in_their_own_section():
+    msg = format_extraction_reply(None, ["Aayush", "Austin"], ["Aayush lives in Austin."], outdated=["Aayush lives in Seattle."])
+
+    assert "<b>No longer true</b>" in msg
+    assert msg.index("<b>Facts</b>") < msg.index("<b>No longer true</b>") < msg.index("Aayush lives in Seattle.")
+    facts_section = msg[msg.index("<b>Facts</b>"):msg.index("<b>No longer true</b>")]
+    assert "Seattle" not in facts_section
+
+
+def test_outdated_capped_at_3_with_more():
+    msg = format_extraction_reply(None, [], [], outdated=names("old", 5))
+
+    section = msg[msg.index("<b>No longer true</b>"):]
+    assert section.count("• ") == 3
+    assert "old-02" in section and "old-03" not in section
+    assert "+2 more" in section
+
+
+def test_no_outdated_section_when_none():
+    msg = format_extraction_reply(None, ENTITIES, FACTS, outdated=[])
+
+    assert "No longer true" not in msg
+
+
+def test_full_caps_with_outdated_fit():
+    entities = [f"{i:02d}" + "x" * 98 for i in range(20)]
+    facts = [f"{i:02d}" + "y" * 498 for i in range(15)]
+    outdated = [f"{i:02d}" + "z" * 498 for i in range(8)]
+    ro = ResponseObject(url="https://ex.com/" + "p" * 3000, title="T" * 300, author="a" * 300, sitename="s" * 300, text="body")
+    msg = format_extraction_reply(ro, entities, facts, outdated=outdated)
+
+    assert len(visible(msg)) < 4096
+    for i in range(3):
+        assert f"{i:02d}" + "z" * 197 + "…" in msg

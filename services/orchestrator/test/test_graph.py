@@ -68,7 +68,10 @@ def test_write_episode_returns_entities_and_facts(monkeypatch):
         async def add_episode(self, **kw):
             return SimpleNamespace(
                 nodes=[SimpleNamespace(name="Zep"), SimpleNamespace(name="Graphiti")],
-                edges=[SimpleNamespace(fact="Zep built Graphiti."), SimpleNamespace(fact="Graphiti uses FalkorDB.")],
+                edges=[
+                    SimpleNamespace(fact="Zep built Graphiti.", episodes=["j1"]),
+                    SimpleNamespace(fact="Graphiti uses FalkorDB.", episodes=["j1"]),
+                ],
             )
 
     async def fake_get_graphiti():
@@ -87,3 +90,41 @@ def test_write_episode_returns_entities_and_facts(monkeypatch):
 
     assert extracted.entities == ["Zep", "Graphiti"]
     assert extracted.facts == ["Zep built Graphiti.", "Graphiti uses FalkorDB."]
+
+
+def test_write_episode_splits_outdated_facts(monkeypatch):
+    """specs/extraction-reply.md #19: facts not linked to this episode are the old ones it invalidated."""
+    import asyncio
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    class FakeGraphiti:
+        driver = object()
+
+        async def add_episode(self, **kw):
+            return SimpleNamespace(
+                nodes=[SimpleNamespace(name="Aayush")],
+                edges=[
+                    SimpleNamespace(fact="Aayush lives in Austin.", episodes=["old-ep", "j1"]),
+                    SimpleNamespace(fact="Aayush lived in Ohio until 2020.", episodes=["j1"],
+                                    invalid_at=datetime(2020, 1, 1, tzinfo=timezone.utc)),
+                    SimpleNamespace(fact="Aayush lives in Seattle.", episodes=["old-ep"]),
+                ],
+            )
+
+    async def fake_get_graphiti():
+        return FakeGraphiti()
+
+    async def fake_save(self, driver):
+        pass
+
+    monkeypatch.setattr(graph, "get_graphiti", fake_get_graphiti)
+    monkeypatch.setattr(graph.EpisodicNode, "save", fake_save)
+
+    extracted = asyncio.run(graph.write_episode(
+        "j1", name="T", body="body", source_description="note",
+        reference_time=datetime(2026, 10, 17, tzinfo=timezone.utc),
+    ))
+
+    assert extracted.facts == ["Aayush lives in Austin.", "Aayush lived in Ohio until 2020."]
+    assert extracted.outdated == ["Aayush lives in Seattle."]

@@ -43,7 +43,7 @@ still stubs. See [CLAUDE.md](../../CLAUDE.md) for the architecture and
 - `articles.py` — `store_article(job_id, text)`: cleaned article text → R2
   `articles/{job_id}.txt` (S3 API via boto3). Best-effort; no-op until `R2_*` is set.
 - `summarize.py` — `Summarizer`: Gemini with a 5-RPM sliding-window limiter. Unused since 2026-10-17.
-- `telegram.py` — `format_extraction_reply(...)` builds the reply (entities + facts, capped at 15 / 10, deduped, truncated to fit one message); `send_html(...)` / `send_text(...)` post Bot API replies threaded to the source message. `send_summary` is the old, unused summary reply.
+- `telegram.py` — `format_extraction_reply(...)` builds the reply (entities + facts + "No longer true" for older facts the save invalidated, capped at 15 / 10 / 3, deduped, truncated to fit one message); `send_html(...)` / `send_text(...)` post Bot API replies threaded to the source message. `send_summary` is the old, unused summary reply.
 - `graph.py` — `write_episode(...)`: one Graphiti episode per job into FalkorDB
   (graph `second-brain`), `gpt-4.1-mini` at temperature 0 for extraction,
   `text-embedding-3-small` for embeddings. Built lazily on first use — the
@@ -77,7 +77,7 @@ Graphiti's entity dedup serial.
 
 `fetching` (render → extract → archive text in R2) → `indexing` (status post
 carries the episode text, then the Graphiti write) → Telegram reply listing the
-extracted entities and facts → `saved`. A graph failure replies "Couldn't save
+extracted entities and facts (plus any older facts the save made outdated, under "No longer true") → `saved`. A graph failure replies "Couldn't save
 this to memory"; the row ends `failed` with the error and the episode text sits
 in D1's `summary` column for a re-drive. The reply is best-effort: if it fails
 to build or send, the job still ends `saved`. Text notes: `indexing` → reply
@@ -155,7 +155,7 @@ curl -s -X POST localhost:8080/jobs -H "X-KB-Secret: devsecret" \
   -d '{"job_id":"b1","content_type":"url","url_source":"blog","url":"https://example.com/post","chat_id":123,"message_id":9}'
 ```
 
-Run tests: `pytest` (from this directory) — 159 tests (7 Gemini-overload tests skipped). The suite is offline:
+Run tests: `pytest` (from this directory) — 164 tests (7 Gemini-overload tests skipped). The suite is offline:
 Playwright, Gemini, Telegram, Graphiti, R2, Supadata, YouTube oEmbed, FxTwitter, Stack Exchange, and GitHub are mocked. Graph-related env
 vars for a real local run: `FALKORDB_HOST` (+ `FALKORDB_PORT`,
 `FALKORDB_PASSWORD`), `OPENAI_API_KEY`; article archive: `R2_ACCOUNT_ID`,

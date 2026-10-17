@@ -23,6 +23,7 @@ _COMMENT_CAP = 300
 # specs/extraction-reply.md
 _MAX_ENTITIES = 15
 _MAX_FACTS = 10
+_MAX_OUTDATED = 3
 _ENTITY_CHARS = 60
 _FACT_CHARS = 200
 _TITLE_CHARS = 200
@@ -60,7 +61,9 @@ def format_message(ro: ResponseObject) -> str:
     return "\n".join(lines)
 
 
-def format_extraction_reply(ro: ResponseObject | None, entities: list[str], facts: list[str]) -> str:
+def format_extraction_reply(
+    ro: ResponseObject | None, entities: list[str], facts: list[str], outdated: list[str] = ()
+) -> str:
     """Telegram HTML reply listing what a save put into memory (specs/extraction-reply.md).
 
     Inputs:
@@ -68,6 +71,7 @@ def format_extraction_reply(ro: ResponseObject | None, entities: list[str], fact
                   None for a text note (no header).
       entities  — entity names from the graph write, in Graphiti's order.
       facts     — fact sentences from the graph write, in Graphiti's order.
+      outdated  — older facts this save invalidated, in Graphiti's order.
 
     Output, in this order:
       1. Header (only when `ro` is given): bold title, then the
@@ -77,6 +81,8 @@ def format_extraction_reply(ro: ResponseObject | None, entities: list[str], fact
          its href stays whole.
       2. "<b>Entities</b>", then the names comma-separated on one line.
       3. "<b>Facts</b>", then one "• <fact>" line per fact.
+      4. "<b>No longer true</b>", then one "• <fact>" line per outdated fact
+         (at most 3, same truncation and "+N more" as facts).
 
     Rules:
       - Duplicates removed before capping: two items are the same when they
@@ -92,19 +98,21 @@ def format_extraction_reply(ro: ResponseObject | None, entities: list[str], fact
       - All user and extracted text is HTML-escaped.
       - The whole message stays under Telegram's 4,096-character limit.
     """
-    entities, facts = _unique(entities), _unique(facts)
+    entities, facts, outdated = _unique(entities), _unique(facts), _unique(list(outdated))
 
     body: list[str] = []
     if entities:
         body.append("<b>Entities</b>")
         body.append(", ".join(_esc(_truncate(e, _ENTITY_CHARS)) for e in entities[:_MAX_ENTITIES]))
         body += _more(entities, _MAX_ENTITIES)
-    if facts:
+    for heading, items, cap in (("Facts", facts, _MAX_FACTS), ("No longer true", outdated, _MAX_OUTDATED)):
+        if not items:
+            continue
         if body:
             body.append("")
-        body.append("<b>Facts</b>")
-        body += [f"• {_esc(_truncate(f, _FACT_CHARS))}" for f in facts[:_MAX_FACTS]]
-        body += _more(facts, _MAX_FACTS)
+        body.append(f"<b>{heading}</b>")
+        body += [f"• {_esc(_truncate(f, _FACT_CHARS))}" for f in items[:cap]]
+        body += _more(items, cap)
     text = "\n".join(body) or _NOTHING_EXTRACTED
 
     if ro is None:
