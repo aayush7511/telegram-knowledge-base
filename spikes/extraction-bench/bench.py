@@ -29,6 +29,7 @@ HERE = Path(__file__).parent
 BASELINE_MODEL = "gpt-4.1-mini-2025-04-14"  # same pin as production (graph.py)
 JUDGE_MODEL = "gpt-4.1-mini-2025-04-14"
 EMBEDDING_MODEL = "text-embedding-3-small"
+ITEMS = os.environ.get("ITEMS", "data/items.json")  # e.g. data/items-halumem-u0.json (one user, all sessions)
 
 
 def load_env() -> None:
@@ -38,6 +39,9 @@ def load_env() -> None:
             os.environ.setdefault(k.strip(), v.strip())
 
 
+MAX_ITEMS = 100  # far above any real Graphiti list
+
+
 def _strict(schema):
     """Copy of a JSON schema in OpenAI strict form: every object closed, every property required."""
     if isinstance(schema, dict):
@@ -45,6 +49,8 @@ def _strict(schema):
         if out.get("type") == "object" and "properties" in out:
             out["additionalProperties"] = False
             out["required"] = list(out["properties"])
+        if out.get("type") == "array":  # small models loop ([0, 2, 4, … 1156]); valid JSON, so only a length cap stops it
+            out.setdefault("maxItems", MAX_ITEMS)
         return out
     if isinstance(schema, list):
         return [_strict(v) for v in schema]
@@ -66,11 +72,12 @@ class _CountingCompletions:
     """Wraps chat.completions.create to count calls and tokens (the generic client doesn't),
     enforce strict schemas, and retry answers that echo the schema or don't parse."""
 
-    MAX_TOKENS = 8192  # a real Graphiti answer is far smaller; stops runaway output
+    MAX_TOKENS = 4096  # a real Graphiti answer is far smaller; stops runaway output
     RETRIES = 2
 
-    def __init__(self, inner, usage, extra_body=None, drop=()):
+    def __init__(self, inner, usage, extra_body=None, drop=(), check_model=False):
         self._inner, self._usage, self._extra, self._drop = inner, usage, extra_body or {}, drop
+        self._check_model = check_model  # hosts that may redirect a retired model to another one
 
     async def create(self, **kw):
         for k in self._drop:  # params some models reject (frontier reasoning models: temperature)
@@ -86,11 +93,20 @@ class _CountingCompletions:
         messages = list(kw["messages"])
         for attempt in range(self.RETRIES + 1):
             r = await self._inner.create(**{**kw, "messages": messages})
+            if self._check_model and r.model != kw["model"]:
+                raise RuntimeError(f"asked for {kw['model']}, served {r.model}")
             self._usage["calls"] += 1
             if r.usage:
                 self._usage["in"] += r.usage.prompt_tokens or 0
                 self._usage["out"] += r.usage.completion_tokens or 0
             why = _bad_answer(r.choices[0].message.content) if rf else None
+            if os.environ.get("LOG_CALLS"):  # debugging: one JSON line per call
+                with open(os.environ["LOG_CALLS"], "a") as f:
+                    f.write(json.dumps({"schema": (rf.get("json_schema") or {}).get("name"),
+                                        "finish": r.choices[0].finish_reason, "attempt": attempt,
+                                        "in": r.usage.prompt_tokens if r.usage else None,
+                                        "out": r.usage.completion_tokens if r.usage else None, "bad": why,
+                                        "answer": (r.choices[0].message.content or "")[:3000]}) + "\n")
             if not why:
                 return r
             self._usage["retries"] = self._usage.get("retries", 0) + 1
@@ -103,9 +119,9 @@ class _CountingCompletions:
 
 
 class _CountingClient:
-    def __init__(self, inner: AsyncOpenAI, usage: dict, extra_body=None, drop=()):
+    def __init__(self, inner: AsyncOpenAI, usage: dict, extra_body=None, drop=(), check_model=False):
         self.chat = type("Chat", (), {})()
-        self.chat.completions = _CountingCompletions(inner.chat.completions, usage, extra_body, drop)
+        self.chat.completions = _CountingCompletions(inner.chat.completions, usage, extra_body, drop, check_model)
 
 
 def build_llm(name: str):
@@ -133,9 +149,11 @@ def build_llm(name: str):
         # OpenRouter: only route to hosts that honour the requested response format.
         client=_CountingClient(inner, counts, {
             **({"provider": {"require_parameters": True}} if "openrouter.ai" in base_url else {}),
-            **({"reasoning": {"enabled": False}} if "nothink" in name else {}),  # e.g. `bench.py teachernothink`
+            **({"reasoning": {"enabled": False}} if "nothink" in name and "openrouter.ai" in base_url else {}),  # e.g. `bench.py teachernothink`
+            **({"chat_template_kwargs": {"enable_thinking": False}} if "nothink" in name and "openrouter.ai" not in base_url else {}),  # vLLM / DeepInfra switch (Qwen3.5)
             **({"reasoning": {"effort": "low"}} if "lowthink" in name else {}),  # models that can't disable it (gpt-oss)
-        } or None, drop=("temperature",) if "frontier" in name else ()),
+        } or None, drop=("temperature",) if "frontier" in name else (),
+           check_model="modal.run" in base_url or "deepinfra" in base_url),
         # json_schema = enforced format; json_object = schema only described in the prompt.
         structured_output_mode=os.environ.get("TEACHER_STRUCTURED", "json_schema"),
     )
@@ -164,6 +182,7 @@ async def run_model(name: str, items: list[dict], reset: bool = True) -> list[di
         if reset:  # a resumed run keeps the graph so later items dedupe against earlier ones
             await driver.execute_query("MATCH (n) DETACH DELETE n")
             await g.build_indices_and_constraints()
+        seen: list[str] = []  # episode uuids so far, for CTX_K
         for item in [i for i in items if i["dataset"] == dataset]:
             before, t0 = usage(), time.time()
             err, entities, facts = None, [], []
@@ -172,9 +191,12 @@ async def run_model(name: str, items: list[dict], reset: bool = True) -> list[di
                     name=item["id"], episode_body=item["body"], source_description=dataset,
                     reference_time=parse_time(item), group_id=graph,
                     source=EpisodeType.message if dataset == "halumem" else EpisodeType.text,
-                    # "noctx" variants: no previous episodes as context ([] = none; None = Graphiti's last 10)
-                    previous_episode_uuids=[] if "noctx" in name else None,
+                    # "noctx" variants: no previous episodes as context ([] = none; None = Graphiti's last 10);
+                    # CTX_K=3: only the last 3 episodes
+                    previous_episode_uuids=[] if "noctx" in name else
+                    (seen[max(len(seen) - int(os.environ["CTX_K"]), 0):] if os.environ.get("CTX_K") else None),
                 )
+                seen.append(r.episode.uuid)
                 entities, facts = [n.name for n in r.nodes], [e.fact for e in r.edges]
             except Exception as e:  # record and keep going: one bad episode shouldn't sink the run
                 err = f"{type(e).__name__}: {e}"[:300]
@@ -223,7 +245,7 @@ async def judge(client: AsyncOpenAI, gold: list[str], row: dict) -> list[int]:
 
 async def main(models: list[str]) -> None:
     load_env()
-    items = json.loads((HERE / "data" / "items.json").read_text())
+    items = json.loads((HERE / ITEMS).read_text())
     if os.environ.get("DATASETS"):  # e.g. DATASETS=redocred
         items = [i for i in items if i["dataset"] in os.environ["DATASETS"].split(",")]
     gold = {(i["dataset"], i["id"]): i["gold"] for i in items}
@@ -242,7 +264,7 @@ async def main(models: list[str]) -> None:
     covered = await asyncio.gather(*(judge(jc, gold[(r["dataset"], r["id"])], r) for r in new_rows))
     for r, c in zip(new_rows, covered):
         r["gold_n"], r["covered_n"] = len(gold[(r["dataset"], r["id"])]), len(c)
-    order = {(i["dataset"], i["id"]): n for n, i in enumerate(json.loads((HERE / "data" / "items.json").read_text()))}
+    order = {(i["dataset"], i["id"]): n for n, i in enumerate(json.loads((HERE / ITEMS).read_text()))}
     rows = sorted(kept + new_rows, key=lambda r: (r["model"], order[(r["dataset"], r["id"])]))
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
