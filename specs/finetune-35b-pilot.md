@@ -37,6 +37,19 @@ whether it is anywhere near the published memory systems. Money is tight: smalle
 | Graphiti ingesting 1 HaluMem user with the fine-tuned model | ~$3–6 | Modal credit (~$9 left this month; past $30 is billed) |
 | gpt-4o judge, 1 user | ~$9 | OpenAI |
 
+## Results (2026-10-19)
+
+- Colab: this Google account has 0 compute units and no 80 GB GPU, so training moved to Modal
+  (`spikes/finetune/modal_train.py`; the notebook stays for an 80 GB Colab runtime).
+- H100 80 GB ran out of memory (76.5 GiB peak: 67 GB weights + expert LoRA state); H200 141 GB works.
+  Unsloth's experimental hybrid packing had to be turned off (`UNSLOTH_EXPERIMENTAL_HYBRID_PACKING=0`).
+- Speed ~26 s/step (4 examples). A full 2 epochs would have cost ~$11–14, so the run was stopped at
+  checkpoint-200 (1.08 epochs): train loss 0.42 → ~0.08, **validation loss 0.082** (5 held-out people).
+- Adapter: private HF repo `aayush7511/qwen3.5-35b-a3b-graphiti-lora` (3.7 GB, LoRA r16 incl. MoE experts).
+- Modal spend for the month ≈ $30.21 (free credit $30): tests $2.20, a cancelled launch $0.31, the run ~$7.98.
+- Next: the HaluMem eval needs Modal credit (resets Nov 1) and ~$9 of gpt-4o judging. Serving the adapter
+  with vLLM needs LoRA support for Qwen3.5's MoE experts; if vLLM lacks it, merge to 16-bit first.
+
 ## Out of scope
 
 - Zero-shot / gpt-4.1-mini baselines, full Halu-Medium, Halu-Long.
