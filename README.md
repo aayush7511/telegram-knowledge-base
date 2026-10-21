@@ -15,6 +15,27 @@ Claude:            searches the graph → "From your knowledge base: you saved L
                    'LLM Powered Autonomous Agents', which covers … start there, then …"
 ```
 
+## Research: the memory layer that's cheap enough to give everyone
+
+**Every AI assistant needs long-term memory, and today memory is too expensive to scale.** Writing a single save into a Graphiti-style memory graph processes **~28× its own content** through a frontier model. That's **≈ $0.09 per save**, or **$13.5K/month for just 1,000 users** saving 5 things a day. Storage is cheap; *writing memories* is the wall. ([measured on our production system](spikes/extraction-bench/README.md))
+
+**Our approach:** a purpose-built open memory-extraction model that drops into Graphiti in place of GPT-class models. It's a 35B mixture-of-experts model with only **3B parameters active per token**, fine-tuned on a synthetic memory dataset we generate with known ground truth. Built and trained for under $100 of compute.
+
+**Early results** (HaluMem-Medium, official scorer, gpt-4o judge, first user):
+
+- **Question answering already matches the leaders:** 55.0% correct, vs Supermemory 54.1% and Zep 55.5%.
+- **Fast iteration:** one data revision moved weighted recall from 36.0 → 46.1 (+28%), precision from 73.5 → 77.9, and memory updates from 1.6% → 11.4% correct.
+- **We know exactly where the remaining gap is.** A session-by-session audit found that extraction recall (16.9 vs Supermemory's 41.5) is lost mostly to Graphiti's own design rules. Our next model (r3) is trained on rewritten rules and a controlled vocabulary built to close it. That dataset is already generated.
+
+| System | Recall | Weighted recall | Target precision | QA correct |
+|---|---|---|---|---|
+| Supermemory (published) | 41.5 | 64.8 | 90.3 | 54.1 |
+| Zep (published) | – | – | – | 55.5 |
+| Ours, r1 | 12.9 | 36.0 | 73.5 | **55.0** |
+| Ours, r2 | 16.9 | 46.1 | 77.9 | 51.5 |
+
+*Early-stage: one HaluMem user so far (published baselines cover all users).*
+
 ## Highlights
 
 - **Agentic retrieval over your own data.** An MCP server with two task-shaped tools (`search_memory`, `save_to_memory`), OAuth 2.1 + Google sign-in, and per-tool rate limits. A companion [Claude skill](workers/mcp/skill/kb-memory/SKILL.md) teaches the model *when* personal context would change an answer, and that a saved item means "worth keeping", not "read".
